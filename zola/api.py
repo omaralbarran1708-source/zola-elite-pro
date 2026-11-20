@@ -97,12 +97,20 @@ class FootballApi:
         res = self._get("teams/statistics", team=team_id, league=league_id, season=season)
         return normalize_team_stats(res)
 
+    @ttl_cache(3600)
+    def standings(self, league_id: int, season: int) -> list[dict]:
+        return normalize_standings(self._get("standings", league=league_id, season=season))
+
     @ttl_cache(10 * 60)
     def odds(self, fixture_id: int) -> dict:
         res = self._get("odds", fixture=fixture_id, bookmaker=BOOKMAKER_BET365)
         if not res:
             res = self._get("odds", fixture=fixture_id)
         return parse_prematch_odds(res)
+
+    @ttl_cache(3600)
+    def standings(self, league_id: int, season: int) -> list[dict]:
+        return normalize_standings(self._get("standings", league=league_id, season=season))
 
     @ttl_cache(60)
     def live_odds(self, fixture_id: int) -> dict:
@@ -129,6 +137,7 @@ def normalize_fixture(item: dict) -> dict:
         "round": league.get("round", ""),
         "country": league.get("country", ""),
         "league_logo": league.get("logo"),
+        "flag": league.get("flag"),
         "home": home.get("name", "Local"),
         "away": away.get("name", "Visita"),
         "home_id": home.get("id"),
@@ -262,3 +271,69 @@ def parse_live_odds(res: list) -> dict:
                 if mk and odd and mk not in out:
                     out[mk] = float(odd)
     return out
+
+
+def zone_of(description: str | None) -> str:
+    """Clasifica la zona de la tabla según la descripción de API-Football."""
+    d = (description or "").lower()
+    if not d:
+        return ""
+    if "relegation" in d or "descenso" in d:
+        return "rel"
+    if "champions league" in d or "libertadores" in d:
+        return "ucl"
+    if "europa league" in d or "sudamericana" in d:
+        return "uel"
+    if "conference" in d:
+        return "uecl"
+    if "play" in d:
+        return "po"
+    if "promotion" in d or "next round" in d or "final" in d:
+        return "up"
+    return "oth"
+
+
+def normalize_standings(res: list) -> list[dict]:
+    """Devuelve una lista de grupos: [{"name", "rows": [...]}]."""
+    groups = []
+    for item in res or []:
+        for table in (item.get("league") or {}).get("standings") or []:
+            rows = []
+            for r in table:
+                al = r.get("all") or {}
+                g = al.get("goals") or {}
+                rows.append({
+                    "rank": r.get("rank"), "team": (r.get("team") or {}).get("name", ""),
+                    "team_id": (r.get("team") or {}).get("id"), "logo": (r.get("team") or {}).get("logo"),
+                    "played": al.get("played") or 0, "win": al.get("win") or 0, "draw": al.get("draw") or 0,
+                    "lose": al.get("lose") or 0, "gf": g.get("for") or 0, "ga": g.get("against") or 0,
+                    "diff": r.get("goalsDiff") or 0, "points": r.get("points") or 0,
+                    "form": r.get("form") or "", "description": r.get("description") or "",
+                    "zone": zone_of(r.get("description")), "group": r.get("group") or "",
+                })
+            if rows:
+                groups.append({"name": rows[0]["group"], "rows": rows})
+    return groups
+
+
+def normalize_standings(res: list) -> list[dict]:
+    """Lista de grupos: [{"name": str, "rows": [...]}]."""
+    groups = []
+    for item in res or []:
+        for table in (item.get("league") or {}).get("standings") or []:
+            rows = []
+            for r in table:
+                al = r.get("all") or {}
+                g = al.get("goals") or {}
+                team = r.get("team") or {}
+                rows.append({
+                    "rank": r.get("rank"), "team": team.get("name", ""), "team_id": team.get("id"),
+                    "logo": team.get("logo"), "played": al.get("played") or 0, "win": al.get("win") or 0,
+                    "draw": al.get("draw") or 0, "lose": al.get("lose") or 0,
+                    "gf": g.get("for") or 0, "ga": g.get("against") or 0,
+                    "diff": r.get("goalsDiff") or 0, "points": r.get("points") or 0,
+                    "form": r.get("form") or "", "zone": r.get("description") or "",
+                })
+            if rows:
+                groups.append({"name": (table[0].get("group") or ""), "rows": rows})
+    return groups

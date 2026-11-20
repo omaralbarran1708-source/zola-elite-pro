@@ -26,6 +26,8 @@ MATCHES = [
      "home_logo": f"{_L}/teams/451.png", "away_logo": f"{_L}/teams/1158.png", "league_logo": f"{_L}/leagues/11.png"},
 ]
 for m in MATCHES:
+    m["flag"] = {"England": "https://media.api-sports.io/flags/gb-eng.svg",
+                 "Peru": "https://media.api-sports.io/flags/pe.svg"}.get(m["country"])
     m["match_key"] = f"demo_{m['fixture_id']}"
     m["source"] = "demo"
     m.setdefault("round", "")
@@ -77,4 +79,92 @@ ODDS = {
     9002: {"1": 1.72, "X": 3.90, "2": 4.75, "Over 2.5": 1.75, "Under 2.5": 2.05, "BTTS Sí": 1.70, "BTTS No": 2.10},
     9003: {"1": 1.08, "X": 8.00, "2": 34.0, "Over 3.5": 2.60, "Under 3.5": 1.45},  # en vivo, min 84
     9004: {"1": 2.60, "X": 3.00, "2": 2.85, "Over 2.5": 2.35, "Under 2.5": 1.57, "BTTS Sí": 2.10, "BTTS No": 1.68},
+}
+
+
+# ---- más partidos de demo (horarios relativos a hoy, hora de Lima) ----
+from datetime import datetime, time, timedelta
+from zoneinfo import ZoneInfo
+
+_LIMA = ZoneInfo("America/Lima")
+
+
+def _ko(hh, mm, days=0):
+    d = datetime.now(_LIMA).date() + timedelta(days=days)
+    return datetime.combine(d, time(hh, mm), _LIMA).isoformat()
+
+
+_EXTRA = [
+    (9006, "LaLiga", 140, "Spain", "Barcelona", 529, "Sevilla", 536, 0, 0, 0, "NS", _ko(14, 0), "Estadi Olímpic"),
+    (9007, "Bundesliga", 78, "Germany", "Bayern München", 157, "Borussia Dortmund", 165, 3, 1, 90, "FT", _ko(9, 30), "Allianz Arena"),
+    (9008, "Serie A", 135, "Italy", "Inter", 505, "AC Milan", 489, 0, 0, 0, "NS", _ko(14, 45), "San Siro"),
+    (9009, "Premier League", 39, "England", "Liverpool", 40, "Manchester United", 33, 1, 0, 52, "2H", _ko(10, 0), "Anfield"),
+    (9010, "Liga 1", 281, "Peru", "Sporting Cristal", 2546, "FBC Melgar", None, 0, 0, 0, "NS", _ko(20, 0), "Estadio Nacional"),
+]
+_LOGOS = {281: 281, 140: 140, 78: 78, 135: 135, 39: 39}
+for fid, lg, lid, ctry, h, hid, a, aid, hg, ag, mn, st, ko, ven in _EXTRA:
+    MATCHES.append({
+        "fixture_id": fid, "match_key": f"demo_{fid}", "source": "demo", "round": "", "kickoff": ko,
+        "league": lg, "league_id": lid, "country": ctry, "season": 2026,
+        "home": h, "away": a, "home_id": hid, "away_id": aid, "home_goals": hg, "away_goals": ag,
+        "minute": mn, "extra": 0, "status_short": st, "venue": ven,
+        "home_logo": f"{_L}/teams/{hid}.png" if hid else None, "away_logo": f"{_L}/teams/{aid}.png" if aid else None,
+        "league_logo": f"{_L}/leagues/{lid}.png",
+    })
+for m, ko in zip(MATCHES[:5], [_ko(16, 0), _ko(13, 0), _ko(14, 0), _ko(18, 30), _ko(11, 0)]):
+    m["kickoff"] = ko
+
+FORMS.update({
+    "Barcelona": TeamForm(2.6, 0.8, 6, 2.1, 1.2, 6, "WWLWW"),
+    "Sevilla": TeamForm(1.3, 1.2, 6, 1.0, 1.6, 6, "DLWLD"),
+    "Bayern München": TeamForm(2.9, 0.7, 6, 2.3, 1.0, 6, "WWWDW"),
+    "Borussia Dortmund": TeamForm(2.0, 1.0, 6, 1.5, 1.4, 6, "WLWDW"),
+    "Inter": TeamForm(2.1, 0.7, 6, 1.6, 1.0, 6, "WWDWW"),
+    "AC Milan": TeamForm(1.8, 0.9, 6, 1.4, 1.2, 6, "WDWLW"),
+    "Liverpool": TeamForm(2.3, 0.8, 6, 1.8, 1.1, 6, "WWWLW"),
+    "Manchester United": TeamForm(1.5, 1.2, 6, 1.1, 1.6, 6, "LDWLW"),
+    "FBC Melgar": TeamForm(1.6, 0.9, 9, 0.9, 1.4, 9, "WDLWD"),
+})
+STATS[9009] = {"home": {"possession": 61, "shots": 11, "shots_on_target": 5, "corners": 6, "fouls": 7, "yellow": 1, "red": 0, "xg": 1.55},
+               "away": {"possession": 39, "shots": 5, "shots_on_target": 1, "corners": 2, "fouls": 11, "yellow": 3, "red": 0, "xg": 0.42}}
+EVENTS[9009] = [
+    {"min": 34, "extra": 0, "team": "Liverpool", "player": "Salah", "assist": "Szoboszlai", "type": "Goal", "detail": "Normal Goal"},
+    {"min": 41, "extra": 0, "team": "Manchester United", "player": "Casemiro", "assist": "", "type": "Card", "detail": "Yellow Card"},
+]
+ODDS.update({
+    9006: {"1": 1.45, "X": 4.80, "2": 6.50, "Over 2.5": 1.50, "Under 2.5": 2.55, "BTTS Sí": 1.80, "BTTS No": 1.95},
+    9008: {"1": 2.05, "X": 3.40, "2": 3.60, "Over 2.5": 1.95, "Under 2.5": 1.85, "BTTS Sí": 1.75, "BTTS No": 2.00},
+    9009: {"1": 1.25, "X": 5.25, "2": 13.0, "Over 2.5": 2.40, "Under 2.5": 1.55},
+    9010: {"1": 1.75, "X": 3.40, "2": 4.80, "Over 2.5": 2.20, "Under 2.5": 1.65},
+})
+
+
+def _row(rank, team, tid, p, w, d, l, gf, ga, form, zone=""):
+    return {"rank": rank, "team": team, "team_id": tid, "logo": f"{_L}/teams/{tid}.png" if tid else None, "played": p,
+            "win": w, "draw": d, "lose": l, "gf": gf, "ga": ga, "diff": gf - ga, "points": w * 3 + d,
+            "form": form, "zone": zone}
+
+
+# Tablas de ejemplo (DEMO, no son reales)
+STANDINGS = {
+    39: [{"name": "Premier League", "rows": [
+        _row(1, "Arsenal", 42, 12, 9, 2, 1, 25, 8, "WWWDW", "Champions League"),
+        _row(2, "Manchester City", 50, 12, 8, 2, 2, 27, 12, "WDWLW", "Champions League"),
+        _row(3, "Liverpool", 40, 12, 8, 1, 3, 24, 14, "WLWWW", "Champions League"),
+        _row(4, "Chelsea", 49, 12, 7, 3, 2, 22, 11, "DWWDW", "Champions League"),
+        _row(5, "Newcastle", 34, 12, 6, 3, 3, 18, 13, "LWDWL", "Europa League"),
+        _row(6, "Aston Villa", 66, 12, 6, 2, 4, 17, 15, "WLWDL", "Conference League"),
+        _row(7, "Tottenham", 47, 12, 5, 3, 4, 19, 17, "DLWWL"),
+        _row(8, "Manchester United", 33, 12, 5, 2, 5, 15, 16, "LWLDW"),
+        _row(18, "Leeds", 63, 12, 2, 3, 7, 10, 22, "LLDLW", "Relegation"),
+    ]}],
+    281: [{"name": "Liga 1 · Clausura", "rows": [
+        _row(1, "Universitario", 2540, 15, 11, 3, 1, 28, 7, "WWDWW", "Libertadores"),
+        _row(2, "Alianza Lima", 2553, 15, 10, 3, 2, 26, 11, "WDWWL", "Libertadores"),
+        _row(3, "Sporting Cristal", 2546, 15, 9, 3, 3, 30, 15, "WLDLW", "Libertadores"),
+        _row(4, "UTC Cajamarca", 2539, 15, 8, 4, 3, 22, 14, "DWWLW", "Sudamericana"),
+        _row(5, "FBC Melgar", None, 15, 7, 4, 4, 20, 16, "WDLWD", "Sudamericana"),
+        _row(6, "ADT", None, 15, 6, 4, 5, 17, 17, "LDWWL"),
+        _row(17, "Alianza Atlético", None, 15, 2, 4, 9, 9, 24, "LLDLL", "Relegation"),
+    ]}],
 }

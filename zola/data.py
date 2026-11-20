@@ -30,7 +30,10 @@ def norm(s: str) -> str:
 def list_matches(api: FootballApi, view: str, day: date) -> tuple[list[dict], str | None]:
     """Devuelve (partidos, aviso). Sin API key usa demo."""
     if not api.enabled:
-        items = list(demo.MATCHES)
+        def hhmm(m):
+            k = m.get("kickoff") or ""
+            return k[11:16] if len(k) >= 16 else "15:00"
+        items = [{**m, "kickoff": f"{day.isoformat()}T{hhmm(m)}:00-05:00"} for m in demo.MATCHES]
         if view == "En vivo":
             items = [m for m in items if is_live(m["status_short"])]
         return items, "Modo demo: agrega tu API key de API-Football para ver partidos reales."
@@ -135,3 +138,14 @@ def settle_history(history, matches: list[dict], api: FootballApi | None = None,
         if m and is_finished(m["status_short"]):
             n += history.settle(row["match_key"], m["home_goals"], m["away_goals"])
     return n
+
+
+def league_standings(api: FootballApi, league_id, season, demo_mode: bool) -> tuple[list, str | None]:
+    if demo_mode:
+        return demo.STANDINGS.get(league_id, []), None
+    if not league_id or not season:
+        return [], None
+    try:
+        return api.standings(int(league_id), int(season)), None
+    except Exception as e:
+        return [], f"Clasificación no disponible: {e}"
