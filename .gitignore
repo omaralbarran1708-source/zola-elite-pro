@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.zola_cfg.json
+zola_history.db
+.streamlit/secrets.toml
+.venv/
+assets/logos/
