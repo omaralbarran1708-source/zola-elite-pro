@@ -1,7 +1,6 @@
 """ZOLA Elite — servidor web (API JSON + interfaz)."""
 from __future__ import annotations
 
-import base64
 import os
 from dataclasses import asdict
 from datetime import date, datetime
@@ -18,7 +17,11 @@ from zola import backtest as bt
 from zola import demo
 from zola.api import FootballApi
 from zola.data import LAST_RATINGS, build_state, list_matches, match_detail
-from zola.logos import _path_for, crest_svg, logo
+import threading
+
+from zola import learn
+from zola.logos import crest_bytes, logo_bytes, prefetch
+from zola.store import get_store
 from zola.model import predict
 from zola.status import STATUS_LABEL, bucket_of, is_finished, is_live
 
@@ -58,12 +61,33 @@ def _find_match(key: str, day: date) -> dict | None:
         fid = int(key.split("_", 1)[1])
     except (IndexError, ValueError):
         return None
-    return api.fixture(fid)
+    stored = get_store().fixture(fid)
+    if stored and is_finished(stored.get("status_short", "")):
+        return stored
+    try:
+        return api.fixture(fid) or stored
+    except Exception:
+        return stored
+
+
+# ligas principales: sus logos se guardan solos al arrancar
+WARM_LEAGUES = [1, 2, 3, 4, 5, 9, 10, 11, 13, 15, 39, 40, 45, 48, 61, 62, 66, 71, 72, 78, 79, 81, 88, 94, 96, 128, 130, 135,
+                137, 140, 143, 144, 179, 203, 239, 242, 250, 253, 262, 265, 268, 281, 282, 307, 344, 848, 29, 30, 31, 32, 34]
+
+
+def _bg(fn, *a):
+    threading.Thread(target=fn, args=a, daemon=True).start()
+
+
+@app.on_event("startup")
+def _warm():
+    _bg(prefetch, [f"https://media.api-sports.io/football/leagues/{i}.png" for i in WARM_LEAGUES])
 
 
 @app.get("/api/status")
 def status():
-    return {"demo": not api.enabled, "remaining": api.remaining, "now": datetime.now(LIMA).isoformat()}
+    return {"demo": not api.enabled, "remaining": api.remaining, "calls": api.calls,
+            "now": datetime.now(LIMA).isoformat(), "storage": get_store().stats()}
 
 
 @app.get("/api/matches")
@@ -73,6 +97,8 @@ def matches(day: str | None = Query(None, alias="date"), live: bool = False):
     except ValueError:
         raise HTTPException(400, "Fecha inválida")
     items, notice = list_matches(api, "En vivo" if live else "Hoy", d)
+    urls = [m.get(k) for m in items for k in ("home_logo", "away_logo", "league_logo", "flag")]
+    _bg(prefetch, urls)   # logos guardados automáticamente
     return {"date": d.isoformat(), "demo": not api.enabled, "notice": notice, "remaining": api.remaining,
             "matches": [_slim(m) for m in items]}
 
@@ -110,8 +136,11 @@ def match(key: str, day: str | None = Query(None, alias="date")):
     if not m:
         raise HTTPException(404, "Partido no encontrado")
     det = match_detail(api, m)
+    weight = learn.learned_weight(m.get("league_id"))
     pred = predict(m["home"], m["away"], det.home_form, det.away_form, det.state, det.odds,
-                   lambdas=det.lambdas, rho=det.rho, source=det.source)
+                   lambdas=det.lambdas, rho=det.rho, source=det.source, market_weight=weight)
+    if m.get("source") != "demo":
+        learn.record(m, pred, det.state)
     p = asdict(pred)
     return {
         "match": _slim(m),
@@ -119,8 +148,29 @@ def match(key: str, day: str | None = Query(None, alias="date")):
         "forms": {"home": asdict(det.home_form), "away": asdict(det.away_form)},
         "stats": det.stats, "events": det.events, "odds": det.odds,
         "state": asdict(det.state), "warnings": det.warnings, "remaining": api.remaining,
-        "ratings": det.ratings_info,
+        "ratings": det.ratings_info, "lineups": det.lineups,
+        "timeline": get_store().timeline(m["match_key"]) if m.get("source") != "demo" else demo.timeline(m),
     }
+
+
+@app.get("/api/topscorers")
+def topscorers(league: int, season: int | None = None, demo_mode: bool = Query(False, alias="demo")):
+    if demo_mode or not api.enabled:
+        return {"players": demo.TOPSCORERS.get(league, [])}
+    if not season:
+        return {"players": []}
+    try:
+        return {"players": api.topscorers(league, season)}
+    except Exception as e:
+        return {"players": [], "error": str(e)}
+
+
+@app.get("/api/learning")
+def learning():
+    """Lo que el sistema ya guardó y aprendió."""
+    ev = learn.evaluate()
+    return {"storage": get_store().stats(), "evaluation": ev, "api_calls_session": api.calls,
+            "current_weight": learn.learned_weight()}
 
 
 @app.get("/api/standings")
@@ -177,14 +227,10 @@ def img(u: str = "", n: str = ""):
     headers = {"Cache-Control": "public, max-age=604800, immutable"}
     host = urlparse(u).hostname or ""
     if u and host in ALLOWED_IMG_HOSTS:
-        uri = logo(u, n)          # descarga y guarda en disco si aún no está
-        path = _path_for(u)
-        if path.exists():
-            data = path.read_bytes()
-            mime = uri.split(";")[0][5:] if uri.startswith("data:") else "image/png"
-            return Response(data, media_type=mime, headers=headers)
-    svg = base64.b64decode(crest_svg(n).split(",", 1)[1])
-    return Response(svg, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+        hit = logo_bytes(u)   # base de datos → disco → descarga (y se guarda)
+        if hit:
+            return Response(hit[1], media_type=hit[0], headers=headers)
+    return Response(crest_bytes(n), media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=3600"})
 
 
 _BT_CACHE: dict = {}

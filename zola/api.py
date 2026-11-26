@@ -1,46 +1,33 @@
-"""Cliente de API-Football (v3) con caché en memoria y normalización de datos.
+"""Cliente de API-Football (v3) con caché persistente y normalización de datos.
 
-El plan gratis de API-Football da ~100 solicitudes al día, así que todo se
-cachea: partidos 60 s, eventos/estadísticas 45 s en vivo, estadísticas de
-temporada de cada equipo 12 h.
+Siguiendo la documentación oficial:
+- `fixtures?ids=` trae en 1 consulta eventos, alineaciones, estadísticas y jugadores.
+- Partidos en juego: 1 consulta por minuto; el resto: 1 al día.
+- Los logos no gastan cuota, pero se recomienda guardarlos (lo hace zola.logos).
+Cada respuesta se guarda en la base de datos: si la app se reinicia no se vuelve
+a gastar la cuota, y si la API falla se usa el último dato guardado.
 """
 from __future__ import annotations
 
+import json
 import time
-from datetime import date
-from functools import wraps
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 import requests
 
 from .model import TeamForm
+from .store import get_store
 
 BASE = "https://v3.football.api-sports.io"
 TIMEZONE = "America/Lima"
 BOOKMAKER_BET365 = 8
+LIVE_STATUSES = {"1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT", "SUSP"}
+DONE_STATUSES = {"FT", "AET", "PEN", "AWD", "WO"}
 
 
 class ApiError(Exception):
     pass
-
-
-def ttl_cache(seconds: int):
-    def deco(fn):
-        store: dict = {}
-
-        @wraps(fn)
-        def wrapper(self, *args):
-            key = (self.key, args)
-            hit = store.get(key)
-            now = time.time()
-            if hit and now - hit[0] < seconds:
-                return hit[1]
-            val = fn(self, *args)
-            store[key] = (now, val)
-            return val
-
-        wrapper.cache_clear = store.clear
-        return wrapper
-    return deco
 
 
 class FootballApi:
@@ -48,6 +35,8 @@ class FootballApi:
         self.key = (key or "").strip()
         self.session = session or requests.Session()
         self.remaining: int | None = None
+        self.calls = 0
+        self._mem: dict = {}
 
     @property
     def enabled(self) -> bool:
@@ -56,11 +45,13 @@ class FootballApi:
     def _get(self, path: str, **params) -> list:
         if not self.enabled:
             raise ApiError("Falta la API key de API-Football")
-        r = self.session.get(f"{BASE}/{path}", headers={"x-apisports-key": self.key},
-                             params=params, timeout=20)
+        r = self.session.get(f"{BASE}/{path}", headers={"x-apisports-key": self.key}, params=params, timeout=20)
+        self.calls += 1
         rem = r.headers.get("x-ratelimit-requests-remaining")
         if rem is not None and rem.isdigit():
             self.remaining = int(rem)
+        if r.status_code == 429:
+            raise ApiError("Límite de consultas por minuto alcanzado; reintenta en un momento")
         if r.status_code != 200:
             raise ApiError(f"API-Football respondió {r.status_code}")
         data = r.json()
@@ -70,52 +61,89 @@ class FootballApi:
             raise ApiError(msg or "Error de API-Football")
         return data.get("response", [])
 
+    def _fetch(self, path: str, ttl: float, **params) -> list:
+        """Consulta con caché en memoria + base de datos. Si la API falla, devuelve lo último guardado."""
+        key = path + "?" + json.dumps(params, sort_keys=True)
+        now = time.time()
+        hit = self._mem.get(key)
+        if hit and now - hit[0] < ttl:
+            return hit[1]
+        st = get_store()
+        cached = st.cache_get(key, ttl)
+        if cached is not None:
+            self._mem[key] = (now, cached)
+            return cached
+        try:
+            data = self._get(path, **params)
+        except ApiError:
+            stale = st.cache_get(key, 10 ** 12)
+            if stale is not None:
+                return stale
+            raise
+        self._mem[key] = (now, data)
+        st.cache_put(key, data)
+        return data
+
     # ---------- partidos ----------
-    @ttl_cache(60)
     def fixtures(self, date_str: str, live: bool) -> list[dict]:
-        params = {"timezone": TIMEZONE}
         if live:
-            params["live"] = "all"
+            res = self._fetch("fixtures", 45, live="all", timezone=TIMEZONE)
         else:
-            params["date"] = date_str
-        return [normalize_fixture(x) for x in self._get("fixtures", **params)]
+            today = datetime.now(ZoneInfo(TIMEZONE)).date().isoformat()
+            ttl = 60 if date_str == today else (6 * 3600 if date_str < today else 3 * 3600)
+            res = self._fetch("fixtures", ttl, date=date_str, timezone=TIMEZONE)
+        items = [normalize_fixture(x) for x in res]
+        get_store().upsert_fixtures(items)
+        return items
 
-    @ttl_cache(45)
-    def fixture(self, fixture_id: int) -> dict | None:
-        res = self._get("fixtures", id=fixture_id, timezone=TIMEZONE)
-        return normalize_fixture(res[0]) if res else None
-
-    @ttl_cache(45)
-    def events(self, fixture_id: int) -> list[dict]:
-        return [normalize_event(e) for e in self._get("fixtures/events", fixture=fixture_id)]
-
-    @ttl_cache(45)
-    def statistics(self, fixture_id: int) -> dict:
-        return normalize_statistics(self._get("fixtures/statistics", fixture=fixture_id))
-
-    @ttl_cache(12 * 3600)
-    def team_form(self, team_id: int, league_id: int, season: int) -> TeamForm:
-        res = self._get("teams/statistics", team=team_id, league=league_id, season=season)
-        return normalize_team_stats(res)
-
-    @ttl_cache(3600)
-    def standings(self, league_id: int, season: int) -> list[dict]:
-        return normalize_standings(self._get("standings", league=league_id, season=season))
-
-    @ttl_cache(10 * 60)
-    def odds(self, fixture_id: int) -> dict:
-        res = self._get("odds", fixture=fixture_id, bookmaker=BOOKMAKER_BET365)
+    def detail(self, fixture_id: int, status_hint: str = "NS") -> dict:
+        """Partido completo en 1 consulta: datos, eventos, estadísticas, alineaciones y jugadores."""
+        ttl = 45 if status_hint in LIVE_STATUSES else (30 * 86400 if status_hint in DONE_STATUSES else 3600)
+        res = self._fetch("fixtures", ttl, ids=str(fixture_id), timezone=TIMEZONE)
         if not res:
-            res = self._get("odds", fixture=fixture_id)
+            return {}
+        item = res[0]
+        fx = normalize_fixture(item)
+        get_store().upsert_fixtures([fx])
+        return {
+            "fixture": fx,
+            "events": [normalize_event(e) for e in item.get("events") or []],
+            "stats": normalize_statistics(item.get("statistics") or []),
+            "lineups": normalize_lineups(item.get("lineups") or []),
+        }
+
+    def fixture(self, fixture_id: int) -> dict | None:
+        d = self.detail(fixture_id, "LIVE")
+        return d.get("fixture") if d else None
+
+    def events(self, fixture_id: int) -> list[dict]:
+        return self.detail(fixture_id, "LIVE").get("events", [])
+
+    def statistics(self, fixture_id: int) -> dict:
+        return self.detail(fixture_id, "LIVE").get("stats", {"home": {}, "away": {}})
+
+    def team_form(self, team_id: int, league_id: int, season: int) -> TeamForm:
+        return normalize_team_stats(self._fetch("teams/statistics", 12 * 3600, team=team_id, league=league_id, season=season))
+
+    def standings(self, league_id: int, season: int) -> list[dict]:
+        return normalize_standings(self._fetch("standings", 3 * 3600, league=league_id, season=season))
+
+    def odds(self, fixture_id: int) -> dict:
+        res = self._fetch("odds", 3600, fixture=fixture_id, bookmaker=BOOKMAKER_BET365)
+        if not res:
+            res = self._fetch("odds", 3600, fixture=fixture_id)
         return parse_prematch_odds(res)
 
-    @ttl_cache(6 * 3600)
+    def live_odds(self, fixture_id: int) -> dict:
+        return parse_live_odds(self._fetch("odds/live", 60, fixture=fixture_id))
+
     def league_results(self, league_id: int, season: int) -> list[dict]:
-        """Resultados terminados de la temporada (1 consulta para toda la liga)."""
-        res = self._get("fixtures", league=league_id, season=season, status="FT-AET-PEN", timezone=TIMEZONE)
+        """Resultados terminados de la temporada (1 consulta para toda la liga, cada 6 h)."""
+        res = self._fetch("fixtures", 6 * 3600, league=league_id, season=season, status="FT-AET-PEN", timezone=TIMEZONE)
+        items = [normalize_fixture(x) for x in res]
+        get_store().upsert_fixtures(items)
         out = []
-        for x in res:
-            f = normalize_fixture(x)
+        for f in items:
             try:
                 d = date.fromisoformat((f["kickoff"] or "")[:10])
             except ValueError:
@@ -123,18 +151,18 @@ class FootballApi:
             out.append({"date": d, "home": f["home"], "away": f["away"], "hg": f["home_goals"], "ag": f["away_goals"]})
         return out
 
-    @ttl_cache(12 * 3600)
     def head_to_head(self, home_id: int, away_id: int) -> list[dict]:
-        res = self._get("fixtures/headtohead", h2h=f"{home_id}-{away_id}", last=6, timezone=TIMEZONE)
+        res = self._fetch("fixtures/headtohead", 24 * 3600, h2h=f"{home_id}-{away_id}", last=6, timezone=TIMEZONE)
         return [normalize_fixture(x) for x in res]
 
-    @ttl_cache(120)
     def fixtures_by_ids(self, ids: tuple) -> list[dict]:
-        return [normalize_fixture(x) for x in self._get("fixtures", ids="-".join(str(i) for i in ids), timezone=TIMEZONE)]
+        res = self._fetch("fixtures", 120, ids="-".join(str(i) for i in ids), timezone=TIMEZONE)
+        items = [normalize_fixture(x) for x in res]
+        get_store().upsert_fixtures(items)
+        return items
 
-    @ttl_cache(60)
-    def live_odds(self, fixture_id: int) -> dict:
-        return parse_live_odds(self._get("odds/live", fixture=fixture_id))
+    def topscorers(self, league_id: int, season: int) -> list[dict]:
+        return normalize_topscorers(self._fetch("players/topscorers", 12 * 3600, league=league_id, season=season))
 
 
 # ---------- normalizadores (puros, testeables) ----------
@@ -334,3 +362,35 @@ def normalize_standings(res: list) -> list[dict]:
             if rows:
                 groups.append({"name": rows[0]["group"], "rows": rows})
     return groups
+
+
+def normalize_lineups(res: list) -> list[dict]:
+    out = []
+    for t in res[:2]:
+        team = t.get("team") or {}
+        colors = (team.get("colors") or {}).get("player") or {}
+        def players(lst):
+            ps = []
+            for x in lst or []:
+                p = x.get("player") or {}
+                ps.append({"id": p.get("id"), "name": p.get("name") or "", "number": p.get("number"),
+                           "pos": p.get("pos") or "", "grid": p.get("grid")})
+            return ps
+        out.append({"team": team.get("name", ""), "team_id": team.get("id"), "logo": team.get("logo"),
+                    "formation": t.get("formation") or "", "coach": (t.get("coach") or {}).get("name") or "",
+                    "color": ("#" + colors["primary"]) if colors.get("primary") else None,
+                    "number_color": ("#" + colors["number"]) if colors.get("number") else None,
+                    "start": players(t.get("startXI")), "subs": players(t.get("substitutes"))})
+    return out
+
+
+def normalize_topscorers(res: list) -> list[dict]:
+    out = []
+    for x in res[:20]:
+        p = x.get("player") or {}
+        st = (x.get("statistics") or [{}])[0]
+        out.append({"name": p.get("name", ""), "photo": p.get("photo"), "team": (st.get("team") or {}).get("name", ""),
+                    "team_logo": (st.get("team") or {}).get("logo"), "goals": (st.get("goals") or {}).get("total") or 0,
+                    "assists": (st.get("goals") or {}).get("assists") or 0,
+                    "games": (st.get("games") or {}).get("appearences") or 0})
+    return out

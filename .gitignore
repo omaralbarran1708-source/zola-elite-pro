@@ -6,3 +6,4 @@ zola_history.db
 .streamlit/secrets.toml
 .venv/
 assets/logos/
+zola_data.db*

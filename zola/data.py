@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 
 from . import demo
 from .api import ApiError, FootballApi
 from .model import LiveState, TeamForm
 from .ratings import Ratings, fit
+from .store import get_store
 from .status import bucket_of, is_finished, is_live
 
 
@@ -24,6 +25,7 @@ class MatchDetail:
     rho: float | None = None
     source: str = ""
     ratings_info: dict | None = None
+    lineups: list = field(default_factory=list)
 
 
 def norm(s: str) -> str:
@@ -98,7 +100,7 @@ def match_detail(api: FootballApi, match: dict) -> MatchDetail:
             home_form=demo.FORMS.get(match["home"], TeamForm()),
             away_form=demo.FORMS.get(match["away"], TeamForm()),
             events=events, stats=stats, odds=demo.ODDS.get(fid, {}),
-            state=build_state(match, events, stats),
+            state=build_state(match, events, stats), lineups=demo.LINEUPS.get(fid, []),
         )
 
     fid = match["fixture_id"]
@@ -113,6 +115,7 @@ def match_detail(api: FootballApi, match: dict) -> MatchDetail:
 
     league, season = match.get("league_id"), match.get("season")
     results = safe(lambda: api.league_results(league, season), [], "Resultados de la liga") if league and season else []
+    results = merge_results(results, get_store().league_results(league, season))
     ratings = ratings_for(league, season, results)
     lambdas = rho = None
     source = ""
@@ -126,8 +129,17 @@ def match_detail(api: FootballApi, match: dict) -> MatchDetail:
     else:
         home_form = safe(lambda: api.team_form(match["home_id"], league, season), TeamForm(), "Stats local")
         away_form = safe(lambda: api.team_form(match["away_id"], league, season), TeamForm(), "Stats visita")
-    events = safe(lambda: api.events(fid), [], "Eventos") if started else []
-    stats = safe(lambda: api.statistics(fid), {"home": {}, "away": {}}, "Estadísticas") if started else {"home": {}, "away": {}}
+    events, stats, lineups = [], {"home": {}, "away": {}}, []
+    soon = False
+    try:
+        ko = datetime.fromisoformat(match.get("kickoff") or "")
+        soon = (ko - datetime.now(ko.tzinfo)).total_seconds() < 90 * 60
+    except (TypeError, ValueError):
+        pass
+    if started or soon:   # 1 sola consulta: eventos + estadísticas + alineaciones
+        det = safe(lambda: api.detail(fid, match["status_short"]), {}, "Detalle del partido")
+        events, lineups = det.get("events", []), det.get("lineups", [])
+        stats = det.get("stats") or stats
     if is_live(match["status_short"]):
         odds = safe(lambda: api.live_odds(fid), {}, "Cuotas en vivo")
     elif is_finished(match["status_short"]):
@@ -135,7 +147,17 @@ def match_detail(api: FootballApi, match: dict) -> MatchDetail:
     else:
         odds = safe(lambda: api.odds(fid), {}, "Cuotas")
     return MatchDetail(home_form, away_form, events, stats, odds, build_state(match, events, stats), warnings,
-                       lambdas=lambdas, rho=rho, source=source, ratings_info=info)
+                       lambdas=lambdas, rho=rho, source=source, ratings_info=info, lineups=lineups)
+
+
+def merge_results(a: list, b: list) -> list:
+    seen, out = set(), []
+    for r in list(a) + list(b):
+        k = (r["date"], r["home"], r["away"])
+        if k not in seen:
+            seen.add(k)
+            out.append(r)
+    return out
 
 
 _RATINGS_CACHE: dict = {}

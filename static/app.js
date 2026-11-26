@@ -312,7 +312,7 @@ function renderList() {
 }
 
 // ================= detalle =================
-const TABS = [["resumen", "Resumen"], ["pronostico", "Pronóstico"], ["stats", "Estadísticas"], ["eventos", "Eventos"],
+const TABS = [["resumen", "Resumen"], ["pronostico", "Pronóstico"], ["stats", "Estadísticas"], ["eventos", "Eventos"], ["alineaciones", "Alineaciones"],
   ["h2h", "Cara a cara"], ["tabla", "Clasificación"], ["cuotas", "Cuotas"], ["sim", "Simulador"]];
 
 function renderDetail() {
@@ -393,7 +393,7 @@ function oddsRow(d, p) {
 function renderTab() {
   const el = $("#tabbody"); if (!el || !S.detail) return;
   const d = S.detail, m = { ...d.match, ...(byKey(S.sel) || {}) }, p = d.prediction;
-  const fn = { resumen: tabResumen, pronostico: tabPronostico, stats: tabStats, eventos: tabEventos, h2h: tabH2H, tabla: tabTabla, cuotas: tabCuotas, sim: tabSim }[S.tab] || tabResumen;
+  const fn = { resumen: tabResumen, pronostico: tabPronostico, stats: tabStats, eventos: tabEventos, alineaciones: tabLineups, h2h: tabH2H, tabla: tabTabla, cuotas: tabCuotas, sim: tabSim }[S.tab] || tabResumen;
   el.innerHTML = fn(m, d, p);
   if (S.tab === "sim") bindSim(m, d, p);
 }
@@ -441,6 +441,7 @@ function strengthBox(m, d) {
 }
 function tabResumen(m, d, p) {
   return `${pickBox(m, d, p)}<div class="box ai"><h4 style="margin-bottom:6px">Análisis ZOLA</h4>${aiText(m, p)}</div>
+    ${probTimeline(m, d)}
     ${compareBox(p)}
     <div class="kpis">${[["+1.5 goles", p.over15], ["+2.5 goles", p.over25], ["+3.5 goles", p.over35], ["Ambos marcan", p.btts]]
       .map(([l, v]) => `<div class="kpi"><div class="l">${l}</div><div class="v">${pct(v)}</div><div class="t"><div style="width:${(v * 100).toFixed(0)}%"></div></div></div>`).join("")}</div>
@@ -638,12 +639,74 @@ async function viewLeagues() {
         <button class="btn" style="margin-left:auto" data-act="pin" data-id="${esc(String(sel.league_id ?? sel.league))}">${S.pins.has(String(sel.league_id)) ? "📌 Fijada" : "📌 Fijar arriba"}</button></div>
       <div class="lgcols">
         <div><div class="sec-title">Clasificación</div><div id="lgTable"><div class="sk" style="height:300px"></div></div></div>
-        <div><div class="sec-title">Partidos · ${dayName(S.date)}</div><div style="border:1px solid var(--line);border-radius:14px;overflow:hidden">${S.matches.filter((m) => String(m.league_id ?? m.league) === S.league).map(matchRow).join("")}</div></div>
+        <div><div class="sec-title">Partidos · ${dayName(S.date)}</div><div style="border:1px solid var(--line);border-radius:14px;overflow:hidden">${S.matches.filter((m) => String(m.league_id ?? m.league) === S.league).map(matchRow).join("")}</div>
+          <div class="sec-title" style="margin-top:16px">Goleadores</div><div id="lgScorers"><div class="sk" style="height:200px"></div></div></div>
       </div></div>`;
   if (window.innerWidth < 900 && location.hash.split("/").length > 2) setTimeout(() => $("#lgcard")?.scrollIntoView({ behavior: "smooth" }), 50);
+  loadScorers(sel);
   const st = await loadStandings(sel.league_id, sel.season, sel.source === "demo");
   const t = $("#lgTable");
   if (t) t.innerHTML = st.groups && st.groups.length ? standingsTable(st.groups) : emptyHtml("📋", "Sin tabla de posiciones", "Esta competición no tiene tabla disponible.");
+}
+
+// ---------- probabilidad en vivo (historial guardado) ----------
+function probTimeline(m, d) {
+  const tl = (d.timeline || []).filter((x) => Array.isArray(x.final) && x.final.length === 3);
+  if (tl.length < 2) return "";
+  const W = 600, H = 150, mx = Math.max(90, ...tl.map((x) => x.minute));
+  const X = (t) => (t / mx) * W, Y = (v) => H - 8 - v * (H - 16);
+  const line = (k, c) => `<path d="${tl.map((x, i) => `${i ? "L" : "M"}${X(x.minute).toFixed(1)},${Y(x.final[k]).toFixed(1)}`).join(" ")}" fill="none" stroke="${c}" stroke-width="2.5" vector-effect="non-scaling-stroke"/>`;
+  const goals = (d.events || []).filter((e) => e.type === "Goal" && e.minute).map((e) => `<line x1="${X(e.minute)}" x2="${X(e.minute)}" y1="4" y2="${H - 4}" stroke="var(--line2)" stroke-dasharray="3"/>`).join("");
+  const last = tl[tl.length - 1].final;
+  return `<div class="box"><h4 style="margin-bottom:8px">Probabilidad minuto a minuto ${d.match.source === "demo" ? '<span class="demo-tag">DEMO</span>' : ""}</h4>
+    <svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="height:${H}px">${goals}
+      <line x1="${X(45)}" x2="${X(45)}" y1="0" y2="${H}" stroke="var(--line)"/>${line(0, "#2f55f5")}${line(1, "#9aa3b2")}${line(2, "#e5484d")}</svg>
+    <div class="muted" style="font-size:.76rem;margin-top:6px;display:flex;gap:14px;flex-wrap:wrap">
+      <span><i class="lg-dot" style="background:#2f55f5"></i>${esc(m.home)} ${pct(last[0])}</span><span><i class="lg-dot" style="background:#9aa3b2"></i>Empate ${pct(last[1])}</span>
+      <span><i class="lg-dot" style="background:#e5484d"></i>${esc(m.away)} ${pct(last[2])}</span><span>· guardado cada minuto, línea punteada = gol</span></div></div>`;
+}
+
+// ---------- alineaciones ----------
+function tabLineups(m, d) {
+  const lu = d.lineups || [];
+  if (lu.length < 2 || !lu[0].start?.length) return emptyHtml("👕", "Alineaciones aún no disponibles", "Suelen publicarse 20–40 minutos antes del inicio.");
+  const rows = (t) => { const g = {}; for (const p of t.start) { const [r] = String(p.grid || "1:1").split(":"); (g[r] = g[r] || []).push(p); } return Object.keys(g).sort((a, b) => a - b).map((r) => g[r].sort((a, b) => (+String(a.grid).split(":")[1]) - (+String(b.grid).split(":")[1]))); };
+  const half = (t, away) => { let rs = rows(t); if (away) rs = rs.reverse().map((r) => r.slice().reverse());
+    return `<div class="phalf">${rs.map((r) => `<div class="prow">${r.map((p) => `<div class="pl"><span class="shirt" style="background:${t.color || (away ? "#e5484d" : "#2f55f5")};color:${t.number_color || "#fff"}">${p.number ?? ""}</span><span class="pn">${esc(shortName(p.name))}</span></div>`).join("")}</div>`).join("")}</div>`; };
+  const head = (t) => `<div class="luhead"><img src="${img(t.logo, t.team)}" alt=""><b>${esc(t.team)}</b><span class="muted">${esc(t.formation || "")}</span></div>`;
+  const bench = (t) => `<div><div class="sec-title">${esc(t.team)}</div>${t.coach ? `<div class="subrow muted">DT · ${esc(t.coach)}</div>` : ""}${(t.subs || []).map((p) => `<div class="subrow"><b>${p.number ?? ""}</b> ${esc(p.name)} <span class="muted">${esc(p.pos || "")}</span></div>`).join("")}</div>`;
+  return `${head(lu[0])}<div class="pitch">${half(lu[0], false)}<div class="pmid"></div>${half(lu[1], true)}</div>${head(lu[1])}
+    <div class="lucols">${bench(lu[0])}${bench(lu[1])}</div>`;
+}
+function shortName(n) { n = String(n || ""); const p = n.split(" "); return p.length > 1 ? p.slice(-1)[0] : n; }
+
+// ---------- goleadores ----------
+async function loadScorers(sel) {
+  const el = $("#lgScorers"); if (!el) return;
+  try {
+    const j = await getJSON(`/api/topscorers?league=${sel.league_id}&season=${sel.season || ""}&demo=${sel.source === "demo"}`);
+    const ps = (j.players || []).slice(0, 10);
+    el.innerHTML = ps.length ? `<div class="scorers">${ps.map((p, i) => `<div class="srow"><span class="pos">${i + 1}</span>
+      <img src="${img(p.team_logo, p.team)}" alt=""><div class="snm"><b>${esc(p.name)}</b><span class="muted">${esc(p.team)}</span></div>
+      <span class="muted" title="Asistencias">🅰 ${p.assists ?? 0}</span><span class="sg">${p.goals}</span></div>`).join("")}</div>` : emptyHtml("⚽", "Sin goleadores", "");
+  } catch { el.innerHTML = emptyHtml("⚽", "Sin goleadores", ""); }
+}
+
+// ---------- aprendizaje ----------
+async function loadLearning() {
+  const el = $("#learnBox"); if (!el) return;
+  try {
+    const j = await getJSON("/api/learning"), st = j.storage || {}, ev = j.evaluation || {}, sy = ev.systems || {};
+    const n = (v) => (v == null ? "—" : Number(v).toLocaleString("es-PE"));
+    const sys = Object.entries({ model: "Modelo", market: "Mercado", final: "ZOLA (mezcla)" }).filter(([k]) => sy[k])
+      .map(([k, l]) => `<tr><td>${l}</td><td>${pct(sy[k].accuracy)}</td><td>${sy[k].logloss.toFixed(3)}</td></tr>`).join("");
+    el.innerHTML = `<h4>🧠 Lo que ZOLA ya guardó y aprendió</h4>
+      <div class="kpis" style="margin-top:10px">${[["Partidos guardados", st.fixtures], ["Predicciones", st.predictions], ["Evaluadas", ev.n], ["Logos guardados", st.logos]]
+        .map(([l, v]) => `<div class="kpi"><div class="l">${l}</div><div class="v">${n(v)}</div></div>`).join("")}</div>
+      <p class="muted" style="font-size:.82rem;margin:10px 0">Almacenamiento: <b>${st.backend === "postgres" ? "Base de datos permanente" : "Local"}</b>${st.ok === false ? " (error)" : ""} ·
+        Peso del mercado aprendido: <b>${pct(j.current_weight)}</b>${ev.n < ev.min_samples ? ` · aprende desde ${ev.min_samples} partidos evaluados (${ev.n || 0} ahora)` : ""}</p>
+      ${sys ? `<table class="tbl"><thead><tr><th>Sistema</th><th>Acierto 1X2</th><th>Log-loss</th></tr></thead><tbody>${sys}</tbody></table>` : ""}`;
+  } catch { el.innerHTML = ""; }
 }
 
 // ================= vista PROBAR MODELO =================
@@ -667,7 +730,9 @@ async function viewTest() {
         <div class="field"><label>Ventaja mínima para apostar</label><div class="rng"><input type="range" id="btT" min="0" max="15" step="1" value="${b.thr}"><span id="btTv">${b.thr}%</span></div></div>
         <button class="btn primary" data-act="runbt" ${b.loading ? "disabled" : ""}>${b.loading ? "Probando…" : "▶ Probar"}</button>
       </div></div>
+    <div class="card pad" id="learnBox" style="margin-bottom:14px"><div class="sk" style="height:90px"></div></div>
     <div id="btOut">${b.loading ? '<div class="card pad"><div class="sk" style="height:260px"></div></div>' : b.err ? `<div class="card">${emptyHtml("⚠️", "No se pudo hacer la prueba", esc(b.err))}</div>` : b.res ? btResults(b.res) : `<div class="card">${emptyHtml("📈", "Elige una liga y temporada", "La prueba tarda unos segundos.")}</div>`}</div>`;
+  loadLearning();
   $("#btLeague").onchange = (e) => { b.league = e.target.value; b.season = null; viewTest(); };
   $("#btSeason").onchange = (e) => { b.season = e.target.value; };
   $("#btW").oninput = (e) => { b.weight = +e.target.value; $("#btWv").textContent = b.weight + "%"; };

@@ -186,3 +186,59 @@ def head_to_head(home: str, away: str, home_logo=None, away_logo=None) -> list[d
             "home_goals": hg, "away_goals": ag, "status_short": "FT", "source": "demo",
         })
     return out
+
+
+def _xi(formation: str, names: list[str], numbers: list[int]) -> list[dict]:
+    rows = [1] + [int(x) for x in formation.split("-")]
+    out, k = [], 0
+    for r, n in enumerate(rows, start=1):
+        for c in range(1, n + 1):
+            pos = "G" if r == 1 else ("D" if r == 2 else ("F" if r == len(rows) else "M"))
+            out.append({"id": None, "name": names[k], "number": numbers[k], "pos": pos, "grid": f"{r}:{c}"})
+            k += 1
+    return out
+
+
+# Alineaciones de ejemplo (DEMO)
+LINEUPS = {
+    9002: [
+        {"team": "Arsenal", "team_id": 42, "logo": f"{_L}/teams/42.png", "formation": "4-3-3", "coach": "M. Arteta",
+         "color": "#e20520", "number_color": "#ffffff",
+         "start": _xi("4-3-3", ["Raya", "Calafiori", "Gabriel", "Saliba", "Timber", "Rice", "Zubimendi", "Ødegaard",
+                                "Martinelli", "Gyökeres", "Saka"], [1, 33, 6, 2, 12, 41, 36, 8, 11, 14, 7]),
+         "subs": [{"name": n, "number": k, "pos": p} for n, k, p in [("Kepa", 13, "G"), ("White", 4, "D"), ("Merino", 23, "M"),
+                                                                       ("Trossard", 19, "F"), ("Madueke", 20, "F")]]},
+        {"team": "Newcastle", "team_id": 34, "logo": f"{_L}/teams/34.png", "formation": "4-3-3", "coach": "E. Howe",
+         "color": "#111111", "number_color": "#ffffff",
+         "start": _xi("4-3-3", ["Pope", "Hall", "Burn", "Botman", "Trippier", "Joelinton", "Tonali", "Guimarães",
+                                "Gordon", "Isak", "Murphy"], [22, 3, 33, 4, 2, 7, 8, 39, 10, 14, 23]),
+         "subs": [{"name": n, "number": k, "pos": p} for n, k, p in [("Ramsdale", 1, "G"), ("Schär", 5, "D"),
+                                                                       ("Willock", 28, "M"), ("Barnes", 11, "F")]]},
+    ],
+}
+
+
+TOPSCORERS = {
+    39: [{"name": n, "photo": None, "team": t, "team_logo": f"{_L}/teams/{i}.png", "goals": g, "assists": a, "games": 12}
+         for n, t, i, g, a in [("E. Haaland", "Manchester City", 50, 14, 2), ("B. Saka", "Arsenal", 42, 8, 6),
+                               ("A. Isak", "Newcastle", 34, 8, 1), ("M. Salah", "Liverpool", 40, 7, 5),
+                               ("Cole Palmer", "Chelsea", 49, 7, 4), ("O. Watkins", "Aston Villa", 66, 6, 2)]],
+    281: [{"name": n, "photo": None, "team": t, "team_logo": f"{_L}/teams/{i}.png", "goals": g, "assists": a, "games": 15}
+          for n, t, i, g, a in [("A. Cauteruccio", "Sporting Cristal", 2546, 11, 3), ("H. Barcos", "Alianza Lima", 2553, 9, 2),
+                                ("A. Valera", "Universitario", 2540, 8, 4)]],
+}
+
+
+def timeline(m: dict) -> list[dict]:
+    """Probabilidad en vivo de ejemplo (DEMO) para partidos en juego o terminados."""
+    if m.get("status_short") in ("NS", "TBD"):
+        return []
+    import math
+    end = min(int(m.get("minute") or 90), 95)
+    seed = sum(map(ord, m["home"])) % 7
+    out = [{"kind": "pre", "minute": 0, "final": [0.46, 0.27, 0.27]}]
+    for t in range(5, end + 1, 5):
+        h = 0.46 + 0.2 * math.sin((t + seed) / 17) * (t / 90)
+        d = 0.27 + 0.1 * (t / 90)
+        out.append({"kind": "live", "minute": t, "final": [round(h, 3), round(d, 3), round(max(0.02, 1 - h - d), 3)]})
+    return out
