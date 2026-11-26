@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from zola import backtest as bt
+from zola import strength
 from zola import demo
 from zola.api import FootballApi
 from zola.data import LAST_RATINGS, build_state, list_matches, match_detail
@@ -82,6 +83,8 @@ def _bg(fn, *a):
 @app.on_event("startup")
 def _warm():
     _bg(prefetch, [f"https://media.api-sports.io/football/leagues/{i}.png" for i in WARM_LEAGUES])
+    _bg(strength._table)
+    _bg(strength.elo_table)
 
 
 @app.get("/api/status")

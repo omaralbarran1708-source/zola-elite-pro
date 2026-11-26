@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
-from . import demo, fdco
+from . import demo, fdco, strength
 from .api import ApiError, FootballApi
 from .model import LiveState, TeamForm
 from .ratings import Ratings, fit
@@ -158,6 +158,22 @@ def match_detail(api: FootballApi, match: dict) -> MatchDetail:
         odds = {}
     else:
         odds = safe(lambda: api.odds(fid), {}, "Cuotas")
+    if lambdas is None:   # sin historial: Elo (ClubElo) y, si no, goles deducidos de las cuotas
+        try:
+            intl = not strength.COUNTRY.get(match.get("country") or "")
+            eh = strength.elo_of(match["home"], None if intl else match.get("country"))
+            ea = strength.elo_of(match["away"], None if intl else match.get("country"))
+            if eh and ea:
+                lambdas = strength.elo_lambdas(eh, ea)
+                source = f"Rating Elo (ClubElo: {eh:.0f} vs {ea:.0f})"
+        except Exception:
+            pass
+    if lambdas is None and odds and not is_live(match["status_short"]):
+        imp = strength.implied_lambdas(odds)
+        if imp:
+            lambdas, source = imp, "Goles esperados deducidos de las cuotas"
+    if lambdas is not None:
+        warnings = [w for w in warnings if not w.startswith(("Stats local", "Stats visita", "Resultados de la liga"))]
     return MatchDetail(home_form, away_form, events, stats, odds, build_state(match, events, stats), warnings,
                        lambdas=lambdas, rho=rho, source=source, ratings_info=info, lineups=lineups)
 
