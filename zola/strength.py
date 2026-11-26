@@ -66,10 +66,12 @@ COUNTRY = {"England": "ENG", "Spain": "ESP", "Italy": "ITA", "Germany": "GER", "
 
 
 def elo_table() -> list[dict]:
-    if time.time() - _ELO["ts"] < 12 * 3600 and _ELO["rows"]:
+    age = time.time() - _ELO["ts"]
+    if age < (12 * 3600 if _ELO["rows"] else 1800):   # si falló, no reintentar en 30 min
         return _ELO["rows"]
+    _ELO["ts"] = time.time()
     try:
-        r = requests.get(f"http://api.clubelo.com/{date.today().isoformat()}", timeout=15)
+        r = requests.get(f"http://api.clubelo.com/{date.today().isoformat()}", timeout=8)
         rows = [{"club": x["Club"], "country": x["Country"], "elo": float(x["Elo"])}
                 for x in csv.DictReader(io.StringIO(r.text)) if x.get("Elo")]
         if rows:

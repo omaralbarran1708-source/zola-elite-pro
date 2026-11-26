@@ -78,6 +78,11 @@ class FootballApi:
         if hit and now - hit[0] < ttl:
             return hit[1]
         st = get_store()
+        if time.time() < getattr(self, "_pause_until", 0):    # cuenta suspendida/límite: no insistir 10 min
+            stale = st.cache_get(key, 10 ** 12)
+            if stale is not None:
+                return stale
+            raise ApiError(self._pause_msg)
         blocked = st.cache_get("blocked:" + key, 24 * 3600)
         if blocked is not None:      # el plan no permite esta consulta: no gastar llamadas
             stale = st.cache_get(key, 10 ** 12)
@@ -91,8 +96,11 @@ class FootballApi:
         try:
             data = self._get(path, **params)
         except ApiError as e:
-            if any(w in str(e).lower() for w in ("plan", "access", "not have")):
+            low = str(e).lower()
+            if any(w in low for w in ("plan", "access", "not have")):
                 st.cache_put("blocked:" + key, str(e))
+            if "suspended" in low or "rate limit" in low or "too many" in low:
+                self._pause_until, self._pause_msg = time.time() + 600, str(e)
             stale = st.cache_get(key, 10 ** 12)
             if stale is not None:
                 return stale
