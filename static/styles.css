@@ -43,7 +43,7 @@ img{display:block}
 .hdr{position:sticky;top:0;z-index:50;background:linear-gradient(180deg,var(--hdr),var(--hdr-2));color:#fff}
 .hdr-top{display:flex;align-items:center;gap:22px;height:64px}
 .brand{display:flex;align-items:center;gap:10px;font-weight:900;font-size:1.55rem;letter-spacing:-.03em;white-space:nowrap}
-.brand img{width:36px;height:36px;border-radius:9px;object-fit:contain;background:rgba(255,255,255,.15)}
+.brand img{width:38px;height:38px;border-radius:11px;object-fit:contain;box-shadow:0 4px 14px rgba(0,0,0,.25)}
 .hnav{display:flex;gap:6px;margin-left:auto}
 .hnav a{display:flex;align-items:center;gap:7px;font-weight:800;font-size:.86rem;letter-spacing:.02em;text-transform:uppercase;padding:.6rem .95rem;border-radius:8px;color:#fff;transition:.15s}
 .hnav a:hover{background:rgba(255,255,255,.12)}
@@ -459,3 +459,8 @@ table.tbl{width:100%;border-collapse:collapse;font-size:.86rem}
 .scorers{border:1px solid var(--line);border-radius:14px;overflow:hidden}.srow{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line)}
 .srow:last-child{border-bottom:0}.srow img{width:22px;height:22px;object-fit:contain}.srow .pos{width:18px;color:var(--muted);font-weight:700;font-size:.8rem}
 .snm{display:flex;flex-direction:column;min-width:0;flex:1}.snm b{font-size:.86rem}.snm .muted{font-size:.74rem}.sg{font-weight:800;min-width:24px;text-align:right}
+
+.riskrow{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:.8rem;flex-wrap:wrap}
+.risk{font-weight:800;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;padding:4px 10px;border-radius:99px}
+.risk.lo{background:rgba(20,164,77,.14);color:var(--green)}.risk.mid{background:rgba(245,158,11,.16);color:#b7791f}.risk.hi{background:rgba(229,72,77,.14);color:var(--red)}
+.riskcard{margin-bottom:14px}.rkgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.rkgrid .l{font-size:.72rem;color:var(--muted);font-weight:700;text-transform:uppercase}.rkgrid .v{font-size:1.15rem;font-weight:800;margin-top:2px}

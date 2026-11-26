@@ -74,7 +74,7 @@ const S = {
   h2h: {}, standings: {}, view: "matches", league: null, mobileDetail: false,
   favs: new Set(ls.get("zola_favs", [])), pins: new Set(ls.get("zola_pins", [])),
   collapsed: new Set(), showProbs: ls.get("zola_probs", true), votes: ls.get("zola_votes", {}),
-  picks: ls.get("zola_picks", []), sim: {}, bt: { leagues: null, league: "E0", season: null, weight: 35, thr: 5, res: null, loading: false, err: null },
+  picks: ls.get("zola_picks", []), sim: {}, bt: { leagues: null, league: "E0", season: null, weight: 35, thr: 5, risk: "auto", res: null, loading: false, err: null },
 };
 let lastScores = {};
 
@@ -198,7 +198,7 @@ const byKey = (k) => S.matches.find((m) => m.match_key === k);
 function updateChip() {
   const c = $("#apichip");
   c.classList.toggle("ok", !S.demo);
-  c.querySelector("span").textContent = S.demo ? "Modo demo" : `Datos en vivo${S.remaining != null ? ` · ${S.remaining}` : ""}`;
+  c.querySelector("span").textContent = S.demo ? "Vista previa" : `En vivo${S.remaining != null ? ` · ${S.remaining} consultas` : ""}`;
 }
 function renderTicker() {
   const live = S.matches.filter((m) => m.live);
@@ -243,7 +243,7 @@ function leagueHead(ms) {
   const m = ms[0], nl = ms.filter((x) => x.live).length, id = String(m.league_id ?? m.league), col = S.collapsed.has(id);
   return `<div class="lgh${col ? " collapsed" : ""}">
     <img class="lg" src="${img(m.league_logo, m.league)}" alt="" loading="lazy">
-    <div style="min-width:0"><div class="nm" data-act="league" data-id="${esc(id)}">${esc(m.league)}${m.source === "demo" ? '<span class="demo-tag">DEMO</span>' : ""}</div>
+    <div style="min-width:0"><div class="nm" data-act="league" data-id="${esc(id)}">${esc(m.league)}</div>
       <div class="ct">${m.flag ? `<img src="${img(m.flag, m.country)}" alt="">` : "🌐"}${esc(countryName(m))}</div></div>
     <span class="cnt">${nl ? `<b>${nl}</b>/` : ""}${ms.length}</span>
     <button class="circ pin${S.pins.has(id) ? " on" : ""}" data-act="pin" data-id="${esc(id)}" title="Fijar liga arriba">📌</button>
@@ -344,7 +344,7 @@ function renderDetail() {
     <div class="dhead">
       <button class="circ back" data-act="back" aria-label="Volver">←</button>
       <img src="${img(m.league_logo, m.league)}" alt="">
-      <div><div class="nm" data-act="league" data-id="${esc(String(m.league_id ?? m.league))}">${esc(m.league)}${m.source === "demo" ? '<span class="demo-tag">DEMO</span>' : ""}</div>
+      <div><div class="nm" data-act="league" data-id="${esc(String(m.league_id ?? m.league))}">${esc(m.league)}</div>
         <div class="sub">${esc(countryName(m))}${m.round ? " · " + esc(m.round) : ""}</div></div>
       <div class="acts">
         <button class="star${fav ? " on" : ""}" data-act="fav" data-key="${esc(m.match_key)}" title="Favorito">${fav ? "★" : "☆"}</button>
@@ -412,8 +412,21 @@ function pickBox(m, d, p) {
   else inner = `<div class="ic">📌</div><div><div class="t">Jugada más probable</div><div class="v">${esc(MK_LABEL[bb.market] || bb.market)}</div>
       <div class="x">${Object.keys(d.odds || {}).length ? "La cuota actual no ofrece valor." : "Sin cuotas para medir valor."}</div></div><div class="e">${pct(bb.prob)}<small>prob.</small></div>`;
   const saved = S.picks.some((x) => x.key === m.match_key);
+  const rk = bb ? riskOf(bb) : null;
   return `<div class="box"><div class="pick">${inner}</div>
+    ${rk ? `<div class="riskrow"><span class="risk ${rk.cls}">Riesgo ${rk.label}</span><span class="muted">${rk.txt}</span></div>` : ""}
     <div style="margin-top:14px"><button class="btn ${saved ? "" : "primary"} block" data-act="savepick" ${saved ? "disabled" : ""}>${saved ? "✓ Guardado en Mis pronósticos" : "💾 Guardar en Mis pronósticos"}</button></div></div>`;
+}
+// El modelo elige el riesgo: según probabilidad y ventaja (¼ de Kelly, máx. 5% del banco)
+function riskOf(bb) {
+  const pr = bb.prob || 0;
+  const lvl = pr >= 0.6 ? ["bajo", "lo"] : pr >= 0.42 ? ["medio", "mid"] : ["alto", "hi"];
+  let txt = "Sin cuota para calcular monto.";
+  if (bb.kind === "valor" && bb.odd > 1) {
+    const k = Math.max(0, (pr * bb.odd - 1) / (bb.odd - 1)) / 4, st = Math.min(0.05, k);
+    txt = st > 0.002 ? `Monto sugerido: ${(st * 100).toFixed(1)}% de tu banco` : "Ventaja mínima: monto muy pequeño.";
+  } else if (bb.kind !== "valor") txt = "Sin valor en la cuota: solo como referencia.";
+  return { label: lvl[0], cls: lvl[1], txt };
 }
 function aiText(m, p) {
   if (m.finished) return `Terminó <b>${esc(m.home)} ${m.home_goals}-${m.away_goals} ${esc(m.away)}</b>. El modelo esperaba <b>${esc(p.best_score)}</b>.`;
@@ -517,7 +530,7 @@ function tabH2H(m) {
   let w = 0, dr = 0, l = 0;
   for (const x of list) { const hg = x.home === m.home ? x.home_goals : x.away_goals, ag = x.home === m.home ? x.away_goals : x.home_goals; hg > ag ? w++ : hg === ag ? dr++ : l++; }
   const t = list.length;
-  return `<div class="box"><h4>Últimos ${t} cruces${list[0].source === "demo" ? '<span class="demo-tag">DEMO</span>' : ""}</h4><div class="s">Resultados entre ambos equipos</div>
+  return `<div class="box"><h4>Últimos ${t} cruces</h4><div class="s">Resultados entre ambos equipos</div>
     <div class="h2hsum"><div><b style="color:var(--brand-ink)">${w}</b><span>${esc(m.home)}</span></div><div><b>${dr}</b><span>Empates</span></div><div><b style="color:var(--orange)">${l}</b><span>${esc(m.away)}</span></div></div>
     <div class="h2hbar"><div style="width:${w / t * 100}%;background:var(--brand)"></div><div style="width:${dr / t * 100}%;background:var(--grey)"></div><div style="width:${l / t * 100}%;background:var(--orange)"></div></div>
     ${list.map((x) => `<div class="h2hrow"><span class="d">${x.kickoff ? new Date(x.kickoff).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "2-digit" }) : ""}</span>
@@ -634,7 +647,7 @@ async function viewLeagues() {
       <span class="n">${c.live ? `<span style="color:var(--red)">${c.live} en vivo</span> · ` : ""}${c.n}</span></button>`).join("")}</div>
     <div class="card" id="lgcard">
       <div class="lpage"><img class="lg" src="${img(sel.league_logo, sel.league)}" alt=""><div>
-        <div class="nm">${esc(sel.league)}${sel.source === "demo" ? '<span class="demo-tag">DEMO</span>' : ""}</div>
+        <div class="nm">${esc(sel.league)}</div>
         <div class="ct">${sel.flag ? `<img src="${img(sel.flag, sel.country)}" alt="">` : "🌐"}${esc(countryName(sel))}${sel.season ? ` · Temporada ${sel.season}/${sel.season + 1}` : ""}</div></div>
         <button class="btn" style="margin-left:auto" data-act="pin" data-id="${esc(String(sel.league_id ?? sel.league))}">${S.pins.has(String(sel.league_id)) ? "📌 Fijada" : "📌 Fijar arriba"}</button></div>
       <div class="lgcols">
@@ -658,7 +671,7 @@ function probTimeline(m, d) {
   const line = (k, c) => `<path d="${tl.map((x, i) => `${i ? "L" : "M"}${X(x.minute).toFixed(1)},${Y(x.final[k]).toFixed(1)}`).join(" ")}" fill="none" stroke="${c}" stroke-width="2.5" vector-effect="non-scaling-stroke"/>`;
   const goals = (d.events || []).filter((e) => e.type === "Goal" && e.minute).map((e) => `<line x1="${X(e.minute)}" x2="${X(e.minute)}" y1="4" y2="${H - 4}" stroke="var(--line2)" stroke-dasharray="3"/>`).join("");
   const last = tl[tl.length - 1].final;
-  return `<div class="box"><h4 style="margin-bottom:8px">Probabilidad minuto a minuto ${d.match.source === "demo" ? '<span class="demo-tag">DEMO</span>' : ""}</h4>
+  return `<div class="box"><h4 style="margin-bottom:8px">Probabilidad minuto a minuto</h4>
     <svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="height:${H}px">${goals}
       <line x1="${X(45)}" x2="${X(45)}" y1="0" y2="${H}" stroke="var(--line)"/>${line(0, "#2f55f5")}${line(1, "#9aa3b2")}${line(2, "#e5484d")}</svg>
     <div class="muted" style="font-size:.76rem;margin-top:6px;display:flex;gap:14px;flex-wrap:wrap">
@@ -726,8 +739,10 @@ async function viewTest() {
       <div class="bt-form">
         <div class="field"><label>Liga</label><select id="btLeague">${b.leagues.map((l) => `<option value="${l.code}" ${l.code === b.league ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select></div>
         <div class="field"><label>Temporada</label><select id="btSeason">${(lg ? lg.seasons : []).map((s, i) => `<option value="${s}" ${s === b.season ? "selected" : ""}>${fmtSeason(s)}${i === 0 ? " (en curso)" : ""}</option>`).join("")}</select></div>
-        <div class="field"><label>Peso del mercado</label><div class="rng"><input type="range" id="btW" min="0" max="80" step="5" value="${b.weight}"><span id="btWv">${b.weight}%</span></div></div>
-        <div class="field"><label>Ventaja mínima para apostar</label><div class="rng"><input type="range" id="btT" min="0" max="15" step="1" value="${b.thr}"><span id="btTv">${b.thr}%</span></div></div>
+        <div class="field"><label>Riesgo</label><select id="btRisk">${[["auto", "🤖 Automático (lo elige ZOLA)"], ["conservador", "🛡️ Conservador"], ["equilibrado", "⚖️ Equilibrado"], ["agresivo", "🔥 Agresivo"], ["manual", "⚙️ Manual"]]
+          .map(([v, l]) => `<option value="${v}" ${b.risk === v ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+        ${b.risk === "manual" ? `<div class="field"><label>Peso del mercado</label><div class="rng"><input type="range" id="btW" min="0" max="80" step="5" value="${b.weight}"><span id="btWv">${b.weight}%</span></div></div>
+        <div class="field"><label>Ventaja mínima para apostar</label><div class="rng"><input type="range" id="btT" min="0" max="15" step="1" value="${b.thr}"><span id="btTv">${b.thr}%</span></div></div>` : ""}
         <button class="btn primary" data-act="runbt" ${b.loading ? "disabled" : ""}>${b.loading ? "Probando…" : "▶ Probar"}</button>
       </div></div>
     <div class="card pad" id="learnBox" style="margin-bottom:14px"><div class="sk" style="height:90px"></div></div>
@@ -735,13 +750,16 @@ async function viewTest() {
   loadLearning();
   $("#btLeague").onchange = (e) => { b.league = e.target.value; b.season = null; viewTest(); };
   $("#btSeason").onchange = (e) => { b.season = e.target.value; };
-  $("#btW").oninput = (e) => { b.weight = +e.target.value; $("#btWv").textContent = b.weight + "%"; };
-  $("#btT").oninput = (e) => { b.thr = +e.target.value; $("#btTv").textContent = b.thr + "%"; };
+  $("#btRisk").onchange = (e) => { b.risk = e.target.value; viewTest(); };
+  if ($("#btW")) $("#btW").oninput = (e) => { b.weight = +e.target.value; $("#btWv").textContent = b.weight + "%"; };
+  if ($("#btT")) $("#btT").oninput = (e) => { b.thr = +e.target.value; $("#btTv").textContent = b.thr + "%"; };
 }
 async function runBacktest() {
   const b = S.bt;
   b.loading = true; b.err = null; viewTest();
-  try { b.res = await getJSON(`/api/backtest?league=${b.league}&season=${b.season}&weight=${b.weight / 100}&threshold=${b.thr / 100}`); }
+  const PRESET = { conservador: [35, 8], equilibrado: [35, 5], agresivo: [25, 2] };
+  const [w, t] = PRESET[b.risk] || [b.weight, b.thr];
+  try { b.res = await getJSON(`/api/backtest?league=${b.league}&season=${b.season}&auto=${b.risk === "auto"}&weight=${w / 100}&threshold=${t / 100}`); }
   catch (e) { b.err = e.message; b.res = null; }
   b.loading = false;
   if (S.view === "test") viewTest();
@@ -773,8 +791,14 @@ function btResults(r) {
   if (mk && bl && bl.logloss <= mk.logloss) verdict = `<b>Muy bien:</b> combinado con el mercado, ZOLA predijo mejor que las cuotas de cierre (log-loss ${bl.logloss.toFixed(3)} vs ${mk.logloss.toFixed(3)}).`;
   else if (mk && m.logloss < s.base.logloss) verdict = `ZOLA predice mejor que adivinar con frecuencias (${m.logloss.toFixed(3)} vs ${s.base.logloss.toFixed(3)}), pero <b>las casas siguen siendo más precisas</b> (${mk.logloss.toFixed(3)}). Es normal: las cuotas de cierre son muy eficientes. Usa ZOLA + mercado y apuesta solo con ventaja clara.`;
   else verdict = `En esta temporada el modelo no superó a la referencia. Prueba otra liga, temporada o sube el peso del mercado.`;
-  const bet = r.betting.blend, betM = r.betting.model;
+  const bet = r.betting.blend, betM = r.betting.model, rk = r.risk;
+  const PN = { conservador: "🛡️ Conservador", equilibrado: "⚖️ Equilibrado", agresivo: "🔥 Agresivo" };
   return `
+    ${rk ? `<div class="card pad riskcard"><div class="sec-title">🤖 Riesgo elegido por ZOLA</div>
+      <div class="rkgrid"><div><div class="l">Perfil</div><div class="v">${PN[rk.profile] || rk.profile}</div></div>
+        <div><div class="l">Peso del mercado</div><div class="v">${pct(rk.weight)}</div></div>
+        <div><div class="l">Ventaja mínima</div><div class="v">${pct(rk.threshold)}</div></div></div>
+      <div class="muted" style="font-size:.78rem;margin-top:8px">Lo eligió con los primeros ${rk.train_matches} partidos evaluados (mejor precisión y mejor rentabilidad${rk.train_roi != null ? ` ${pct(rk.train_roi, 1)}` : ""}); el resto sirve como prueba real.</div></div>` : ""}
     <div class="verdict"><span class="ic">🧠</span><div>${verdict}<div class="muted" style="font-size:.8rem;margin-top:4px">${esc(r.league_name)} ${esc(fmtSeason(r.season))} · ${r.evaluated} partidos evaluados (los primeros ${r.warmup} solo sirvieron para aprender) · cuotas: ${esc(r.odds_source || "—")}</div></div></div>
     <div class="bt-grid">
       <div class="kpi"><div class="l">Acierto 1X2 · ZOLA</div><div class="v">${pct(m.accuracy, 1)}</div><div class="d">Casa: ${mk ? pct(mk.accuracy, 1) : "—"} · Base: ${pct(s.base.accuracy, 1)}</div></div>

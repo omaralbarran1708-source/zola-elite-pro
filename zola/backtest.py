@@ -132,18 +132,70 @@ def _outcome(hg, ag):
     return 0 if hg > ag else (1 if hg == ag else 2)
 
 
+RISK_PROFILES = {"conservador": 0.08, "equilibrado": 0.05, "agresivo": 0.02}
+
+
+def _bets(recs, weight, thr, min_prob):
+    """Simula apuestas de valor (stake fijo 1u) con el sistema combinado y el modelo puro."""
+    out = {k: {"bets": 0, "won": 0, "units": 0.0, "series": [0.0]} for k in ("model", "blend")}
+    picks = []
+    for r in recs:
+        pick = None
+        if r["pk"]:
+            for k in ("model", "blend"):
+                p = r["pm"] if k == "model" else [(1 - weight) * a + weight * b for a, b in zip(r["pm"], r["pk"])]
+                edges = [p[t] * r["odds"][t] - 1 for t in range(3)]
+                t = int(np.argmax(edges))
+                if edges[t] >= thr and p[t] >= min_prob:
+                    b = out[k]
+                    win = t == r["res"]
+                    b["bets"] += 1; b["won"] += int(win)
+                    b["units"] += (r["odds"][t] - 1) if win else -1
+                    b["series"].append(round(b["units"], 3))
+                    if k == "blend":
+                        pick = {"outcome": "1X2"[t], "odd": r["odds"][t], "edge": round(edges[t], 3), "won": win}
+        picks.append(pick)
+    return out, picks
+
+
+def _ll_blend(recs, w):
+    xs = [r for r in recs if r["pk"]]
+    if not xs:
+        return float("inf")
+    return sum(-math.log(max((1 - w) * r["pm"][r["res"]] + w * r["pk"][r["res"]], 1e-9)) for r in xs) / len(xs)
+
+
+def choose_risk(recs, min_prob=0.25):
+    """El modelo elige solo: peso del mercado (mejor log-loss) y ventaja mínima (mejor ROI con ≥15 apuestas),
+    usando solo la primera mitad de los partidos evaluados para no hacer trampa."""
+    train = recs[: max(20, len(recs) // 2)]
+    w = min((x / 20 for x in range(0, 17)), key=lambda w: _ll_blend(train, w))
+    best_t, best_roi = 0.05, -9.0
+    for t in (0.02, 0.03, 0.05, 0.07, 0.10, 0.12, 0.15):
+        b = _bets(train, w, t, min_prob)[0]["blend"]
+        if b["bets"] >= 15:
+            roi = b["units"] / b["bets"]
+            if roi > best_roi:
+                best_t, best_roi = t, roi
+    if best_roi <= 0:            # ninguna opción ganó dinero: el modelo se protege
+        best_t = 0.12
+    profile = "conservador" if best_t >= 0.08 else ("equilibrado" if best_t >= 0.05 else "agresivo")
+    return {"weight": round(w, 2), "threshold": best_t, "profile": profile, "train_matches": len(train),
+            "train_roi": None if best_roi == -9.0 else round(best_roi, 4)}
+
+
 def run_backtest(rows: list[dict], warmup: int | None = None, market_weight: float = 0.35,
-                 value_threshold: float = 0.05, min_prob: float = 0.25, half_life: float = 120) -> dict:
+                 value_threshold: float = 0.05, min_prob: float = 0.25, half_life: float = 120,
+                 auto: bool = False) -> dict:
     n_all = len(rows)
     if n_all < 40:
         raise ValueError("Muy pocos partidos jugados para probar (mínimo 40).")
     warmup = warmup if warmup is not None else max(40, int(n_all * 0.25))
     names = ("model", "market", "blend", "base")
     acc = {k: {"n": 0, "hit": 0, "ll": 0.0, "brier": 0.0} for k in names}
-    bets = {k: {"bets": 0, "won": 0, "units": 0.0, "series": [0.0]} for k in ("model", "blend")}
     ou = {"n": 0, "hit": 0, "ll": 0.0, "mkt_ll": 0.0, "mkt_n": 0}
     calib = np.zeros((10, 3))  # suma p, suma observado, conteo
-    sample = []
+    recs = []
     skipped = 0
     ratings, fitted_at, fitted_n = None, None, -1
 
@@ -166,23 +218,13 @@ def run_backtest(rows: list[dict], warmup: int | None = None, market_weight: flo
         pm = [float(m[i > j].sum()), float(m[i == j].sum()), float(m[i < j].sum())]
         p_over = float(m[(i + j) > 2].sum())
         res = _outcome(r["hg"], r["ag"])
-        onehot = [1.0 if k == res else 0.0 for k in range(3)]
         tot = [sum(1 for x in past if _outcome(x["hg"], x["ag"]) == k) for k in range(3)]
         pb = [(t + 1) / (len(past) + 3) for t in tot]
-        probs = {"model": pm, "base": pb}
-        if r["odds"]:
-            pk = _fair(r["odds"])
-            probs["market"] = pk
-            probs["blend"] = [(1 - market_weight) * a + market_weight * b for a, b in zip(pm, pk)]
-        for k, p in probs.items():
-            a = acc[k]
-            a["n"] += 1
-            a["hit"] += int(int(np.argmax(p)) == res)
-            a["ll"] += -math.log(max(p[res], 1e-9))
-            a["brier"] += sum((p[t] - onehot[t]) ** 2 for t in range(3))
+        recs.append({"r": r, "pm": pm, "pb": pb, "pk": _fair(r["odds"]) if r["odds"] else None,
+                     "odds": r["odds"], "res": res})
         for t in range(3):
             b = min(9, int(pm[t] * 10))
-            calib[b] += (pm[t], onehot[t], 1)
+            calib[b] += (pm[t], 1.0 if t == res else 0.0, 1)
         over = (r["hg"] + r["ag"]) > 2
         ou["n"] += 1
         ou["hit"] += int((p_over > 0.5) == over)
@@ -192,25 +234,33 @@ def run_backtest(rows: list[dict], warmup: int | None = None, market_weight: flo
             ou["mkt_ll"] += -math.log(max(fo[0] if over else fo[1], 1e-9))
             ou["mkt_n"] += 1
 
-        pick = None
-        if r["odds"]:
-            for k in ("model", "blend"):
-                p = probs[k]
-                edges = [p[t] * r["odds"][t] - 1 for t in range(3)]
-                t = int(np.argmax(edges))
-                if edges[t] >= value_threshold and p[t] >= min_prob:
-                    b = bets[k]
-                    b["bets"] += 1
-                    win = t == res
-                    b["won"] += int(win)
-                    b["units"] += (r["odds"][t] - 1) if win else -1
-                    b["series"].append(round(b["units"], 3))
-                    if k == "blend":
-                        pick = {"outcome": "1X2"[t], "odd": r["odds"][t], "edge": round(edges[t], 3), "won": win}
+    risk = None
+    if auto and recs:
+        risk = choose_risk(recs, min_prob)
+        market_weight, value_threshold = risk["weight"], risk["threshold"]
+    for rc in recs:
+        res = rc["res"]
+        onehot = [1.0 if k == res else 0.0 for k in range(3)]
+        probs = {"model": rc["pm"], "base": rc["pb"]}
+        if rc["pk"]:
+            probs["market"] = rc["pk"]
+            probs["blend"] = [(1 - market_weight) * a + market_weight * b for a, b in zip(rc["pm"], rc["pk"])]
+        rc["probs"] = probs
+        for k, p in probs.items():
+            a = acc[k]
+            a["n"] += 1
+            a["hit"] += int(int(np.argmax(p)) == res)
+            a["ll"] += -math.log(max(p[res], 1e-9))
+            a["brier"] += sum((p[t] - onehot[t]) ** 2 for t in range(3))
+    bets, picks = _bets(recs, market_weight, value_threshold, min_prob)
+    sample = []
+    for rc, pick in zip(recs, picks):
+        r = rc["r"]
         sample.append({
             "date": r["date"].isoformat(), "home": r["home"], "away": r["away"], "score": f"{r['hg']}-{r['ag']}",
-            "result": "1X2"[res], "model": [round(x, 3) for x in pm], "market": [round(x, 3) for x in probs.get("market", [])],
-            "odds": r["odds"], "hit": int(np.argmax(probs.get("blend", pm))) == res, "pick": pick,
+            "result": "1X2"[rc["res"]], "model": [round(x, 3) for x in rc["pm"]],
+            "market": [round(x, 3) for x in (rc["pk"] or [])], "odds": r["odds"],
+            "hit": int(np.argmax(rc["probs"].get("blend", rc["pm"]))) == rc["res"], "pick": pick,
         })
 
     def summ(a):
@@ -234,4 +284,5 @@ def run_backtest(rows: list[dict], warmup: int | None = None, market_weight: flo
                    "market_logloss": ou["mkt_ll"] / ou["mkt_n"] if ou["mkt_n"] else None},
         "calibration": cal, "sample": sample[-30:][::-1], "odds_source": src,
         "params": {"market_weight": market_weight, "value_threshold": value_threshold, "half_life_days": half_life},
+        "risk": risk,
     }

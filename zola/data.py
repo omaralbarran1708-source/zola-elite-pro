@@ -43,7 +43,7 @@ def list_matches(api: FootballApi, view: str, day: date) -> tuple[list[dict], st
         items = [{**m, "kickoff": f"{day.isoformat()}T{hhmm(m)}:00-05:00"} for m in demo.MATCHES]
         if view == "En vivo":
             items = [m for m in items if is_live(m["status_short"])]
-        return items, "Modo demo: agrega tu API key de API-Football para ver partidos reales."
+        return items, None
     try:
         items = api.fixtures(day.isoformat(), view == "En vivo")
     except ApiError as e:

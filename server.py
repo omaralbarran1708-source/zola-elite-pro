@@ -244,13 +244,14 @@ def backtest_leagues():
 
 
 @app.get("/api/backtest")
-def backtest(league: str = "E0", season: str | None = None, weight: float = 0.35, threshold: float = 0.05):
+def backtest(league: str = "E0", season: str | None = None, weight: float = 0.35, threshold: float = 0.05,
+             auto: bool = True):
     if league not in bt.MAIN_LEAGUES and league not in bt.EXTRA_LEAGUES:
         raise HTTPException(400, "Liga no disponible")
     season = season or bt.seasons_for(league, _today())[0]
     weight = min(max(weight, 0.0), 1.0)
     threshold = min(max(threshold, 0.0), 0.5)
-    key = (league, season, round(weight, 2), round(threshold, 3))
+    key = (league, season, "auto") if auto else (league, season, round(weight, 2), round(threshold, 3))
     if key in _BT_CACHE and _BT_CACHE[key][0] > datetime.now().timestamp() - 6 * 3600:
         return _BT_CACHE[key][1]
     try:
@@ -259,7 +260,7 @@ def backtest(league: str = "E0", season: str | None = None, weight: float = 0.35
         return JSONResponse({"error": f"No se pudieron descargar los datos: {e}"}, status_code=502)
     rows = bt.parse_csv(text, season if league in bt.EXTRA_LEAGUES else None)
     try:
-        res = bt.run_backtest(rows, market_weight=weight, value_threshold=threshold)
+        res = bt.run_backtest(rows, market_weight=weight, value_threshold=threshold, auto=auto)
     except ValueError as e:
         return JSONResponse({"error": str(e), "matches": len(rows)}, status_code=422)
     name = bt.MAIN_LEAGUES.get(league) or bt.EXTRA_LEAGUES.get(league)
