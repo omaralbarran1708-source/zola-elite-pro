@@ -145,6 +145,12 @@ def run_import(force: bool = False, log=lambda *_: None) -> None:
             n += import_internationals(log)
         except Exception as e:
             log(f"INT error {e}")
+        _state["msg"] = "jugadores y estadios (Transfermarkt)"
+        try:
+            n += import_transfermarkt(log)
+            st.kv_set("tm_done", {"ts": time.time()})
+        except Exception as e:
+            log(f"TM error {e}")
         _state["msg"] = "aprendiendo"
         learn_from_history(log)
         st.kv_set("history_import", {"ts": time.time(), "rows": n})
@@ -158,7 +164,11 @@ def start_background():
 
 # ---------------- consultas para la página ----------------
 def code_for(league_id) -> str | None:
-    return LEAGUE_CODES.get(league_id)
+    if league_id in LEAGUE_CODES:
+        return LEAGUE_CODES[league_id]
+    if league_id in API_HIST_LEAGUES:
+        return f"AF{league_id}"
+    return None
 
 
 def past_seasons(league_id, limit: int = 6) -> list[dict]:
@@ -167,9 +177,11 @@ def past_seasons(league_id, limit: int = 6) -> list[dict]:
     if not code:
         return []
     st = get_store()
+    from .leagues import current_season, label
+    cur = label(league_id, current_season(league_id))
     seasons = [r["season"] for r in st.q("SELECT DISTINCT season FROM history WHERE code=? ORDER BY season DESC", (code,))]
     out = []
-    for s in seasons[1:limit + 1]:
+    for s in [x for x in seasons if x != cur][:limit]:
         rows = st.q("SELECT home, away, hg, ag FROM history WHERE code=? AND season=?", (code, s))
         if len(rows) < 50:
             continue
@@ -247,3 +259,154 @@ def status() -> dict:
     return {"rows": sum(counts.values()), "by_code": counts, "last_import": info.get("ts"),
             "running": _state["running"], "step": _state["msg"],
             "learned": st.kv_get("history_learning", {}) or {}}
+
+
+# ---------------- API-Football (plan gratis: temporadas 2022–2024) ----------------
+API_HIST_LEAGUES = (281, 13, 11)          # Liga 1 Perú, Libertadores, Sudamericana
+API_HIST_SEASONS = (2024, 2023, 2022)
+PS_INSERT = ("INSERT INTO players_season (league_id, season, player_id, name, club, club_logo, photo, goals, assists, games, "
+             "minutes, source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (league_id, season, player_id) DO UPDATE SET "
+             "goals=excluded.goals, assists=excluded.assists, games=excluded.games, minutes=excluded.minutes, club=excluded.club")
+
+
+def import_api_history(api, log=print) -> int:
+    """Liga 1 y copas sudamericanas de temporadas anteriores desde API-Football (pocas consultas, una sola vez)."""
+    from .leagues import hist_code, label
+    st, n = get_store(), 0
+    done = st.kv_get("api_hist_done", {}) or {}
+    for lid in API_HIST_LEAGUES:
+        for season in API_HIST_SEASONS:
+            k = f"{lid}:{season}"
+            if done.get(k) or not api.enabled or (api.remaining is not None and api.remaining < 30):
+                continue
+            try:
+                res = api.league_results(lid, season)
+                rows = [(hist_code(lid), label(lid, season), r["date"].isoformat(), r["home"], r["away"], r["hg"], r["ag"],
+                         None, None, None, None) for r in res]
+                st.xmany(INSERT, rows)
+                n += len(rows)
+                try:
+                    sc = api.topscorers(lid, season)
+                    st.xmany(PS_INSERT, [(lid, label(lid, season), str(p.get("name")), p.get("name"), p.get("team"),
+                                          p.get("team_logo"), p.get("photo"), p.get("goals") or 0, p.get("assists") or 0,
+                                          p.get("games") or 0, None, "api") for p in sc])
+                except Exception:
+                    pass
+                done[k] = len(rows)
+                st.kv_set("api_hist_done", done)
+                log(f"API {k}: {len(rows)}")
+            except Exception as e:
+                log(f"API {k}: {e}")
+    return n
+
+
+def backfill_dates(api, max_calls: int = 12, log=print) -> int:
+    """Usa consultas sobrantes del día para traer resultados de días pasados de esta temporada (todas las ligas)."""
+    from datetime import timedelta
+    st = get_store()
+    cur = st.kv_get("backfill_cursor") or (date.today() - timedelta(days=1)).isoformat()
+    d = date.fromisoformat(cur)
+    stop = date(date.today().year, 1, 15)
+    n = 0
+    while n < max_calls and d >= stop and api.enabled and (api.remaining is None or api.remaining > 45):
+        try:
+            api.fixtures(d.isoformat(), False)
+        except Exception as e:
+            log(f"backfill {d}: {e}")
+            if "plan" in str(e).lower() or "access" in str(e).lower():
+                break
+        n += 1
+        d -= timedelta(days=1)
+        st.kv_set("backfill_cursor", d.isoformat())
+    return n
+
+
+# ---------------- Transfermarkt (transfermarkt-datasets, actualizado semanal; congelado jul-2026) ----------------
+TM_BASE = "https://pub-e682421888d945d684bcae8890b0ec20.r2.dev/data/"
+TM_COMPS = {"GB1": 39, "ES1": 140, "IT1": 135, "L1": 78, "FR1": 61, "NL1": 88, "PO1": 94, "BE1": 144, "TR1": 203,
+            "SC1": 179, "CL": 2, "EL": 3, "UCOL": 848, "FIWC": 1, "GR1": 197, "DK1": 119, "RU1": 235, "UKR1": 333}
+
+
+def _tm_csv(name: str):
+    import gzip
+    r = requests.get(TM_BASE + name, timeout=120, stream=True)
+    r.raise_for_status()
+    r.raw.decode_content = True
+    return csv.DictReader(io.TextIOWrapper(gzip.GzipFile(fileobj=r.raw), encoding="utf-8"))
+
+
+def import_transfermarkt(log=print, top: int = 30) -> int:
+    st = get_store()
+    clubs = {}
+    for c in _tm_csv("clubs.csv.gz"):
+        clubs[c.get("club_id")] = c.get("name") or c.get("club_code")
+        lid = TM_COMPS.get(c.get("domestic_competition_id"))
+        seats = c.get("stadium_seats")
+        st.x("INSERT INTO clubs_info (club_id, name, league_id, stadium, seats, coach) VALUES (?,?,?,?,?,?) "
+             "ON CONFLICT (club_id) DO UPDATE SET stadium=excluded.stadium, seats=excluded.seats, coach=excluded.coach",
+             (c.get("club_id"), clubs[c.get("club_id")], lid, c.get("stadium_name"),
+              int(float(seats)) if seats not in (None, "") else None, c.get("coach_name")))
+    log(f"TM clubes: {len(clubs)}")
+    agg: dict = {}
+    for a in _tm_csv("appearances.csv.gz"):
+        lid = TM_COMPS.get(a.get("competition_id"))
+        if not lid or not a.get("date"):
+            continue
+        try:
+            d = date.fromisoformat(a["date"][:10])
+        except ValueError:
+            continue
+        from .leagues import label
+        y = d.year if (d.month >= 7 or lid == 1) else d.year - 1
+        k = (lid, label(lid, y) if lid != 1 else str(d.year), a.get("player_id"))
+        e = agg.get(k)
+        if e is None:
+            e = agg[k] = [a.get("player_name"), clubs.get(a.get("player_club_id"), ""), 0, 0, 0, 0]
+        e[2] += int(float(a.get("goals") or 0)); e[3] += int(float(a.get("assists") or 0))
+        e[4] += 1; e[5] += int(float(a.get("minutes_played") or 0))
+    by: dict = {}
+    for (lid, season, pid), e in agg.items():
+        by.setdefault((lid, season), []).append((pid, e))
+    rows = []
+    for (lid, season), lst in by.items():
+        keep = {pid for pid, _ in sorted(lst, key=lambda x: -x[1][2])[:top]} | \
+               {pid for pid, _ in sorted(lst, key=lambda x: -x[1][3])[:top]}
+        for pid, e in lst:
+            if pid in keep:
+                rows.append((lid, season, f"tm{pid}", e[0], e[1], None, None, e[2], e[3], e[4], e[5], "transfermarkt"))
+    for i in range(0, len(rows), 1000):
+        st.xmany(PS_INSERT, rows[i:i + 1000])
+    log(f"TM jugadores: {len(rows)}")
+    return len(rows)
+
+
+def scorers(league_id, season: str | None = None, order: str = "goals", limit: int = 15) -> dict:
+    st = get_store()
+    seasons_ = [r["season"] for r in st.q("SELECT DISTINCT season FROM players_season WHERE league_id=? ORDER BY season DESC",
+                                          (league_id,))]
+    if not seasons_:
+        return {"seasons": [], "players": []}
+    season = season if season in seasons_ else seasons_[0]
+    col = "assists" if order == "assists" else "goals"
+    rows = st.q(f"SELECT name, club, club_logo, photo, goals, assists, games, minutes FROM players_season "
+                f"WHERE league_id=? AND season=? ORDER BY {col} DESC, goals DESC LIMIT ?", (league_id, season, limit))
+    return {"seasons": seasons_, "season": season, "players": [
+        {"name": r["name"], "team": r["club"], "team_logo": r["club_logo"], "photo": r["photo"], "goals": r["goals"],
+         "assists": r["assists"], "games": r["games"], "minutes": r["minutes"]} for r in rows]}
+
+
+def clubs_of(league_id) -> list[dict]:
+    return get_store().q("SELECT name, stadium, seats, coach FROM clubs_info WHERE league_id=? ORDER BY seats DESC", (league_id,))
+
+
+def ensure_transfermarkt(log=lambda *_: None) -> None:
+    st = get_store()
+    if st.ok and not st.kv_get("tm_done") and not _state["running"]:
+        _state.update(running=True, msg="jugadores y estadios (Transfermarkt)")
+        try:
+            import_transfermarkt(log)
+            st.kv_set("tm_done", {"ts": time.time()})
+        except Exception as e:
+            st.kv_set("tm_error", str(e))
+        finally:
+            _state.update(running=False, msg="")

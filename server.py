@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from zola import backtest as bt
 from zola import strength
 from zola import history
+from zola import leagues
 from zola import demo
 from zola.api import FootballApi
 from zola.data import LAST_RATINGS, build_state, list_matches, match_detail
@@ -87,7 +88,20 @@ def _warm():
     _bg(prefetch, [f"https://media.api-sports.io/football/leagues/{i}.png" for i in WARM_LEAGUES])
     _bg(strength._table)
     _bg(strength.elo_table)
-    _bg(lambda: (time.sleep(45), history.run_import()))
+    _bg(_scheduler)
+
+
+def _scheduler():
+    """Tareas de fondo: historial semanal, temporadas anteriores por API y relleno de días pasados con consultas sobrantes."""
+    time.sleep(45)
+    while True:
+        for job in (history.run_import, history.ensure_transfermarkt, lambda: history.import_api_history(api),
+                    lambda: history.backfill_dates(api)):
+            try:
+                job()
+            except Exception:
+                pass
+        time.sleep(3600)
 
 
 @app.get("/api/status")
@@ -166,9 +180,23 @@ def topscorers(league: int, season: int | None = None, demo_mode: bool = Query(F
     if not season:
         return {"players": []}
     try:
-        return {"players": api.topscorers(league, season)}
+        ps = api.topscorers(league, season)
+        if ps:
+            return {"players": ps, "season": leagues.label(league, season)}
+    except Exception:
+        pass
+    try:   # historial: Transfermarkt / temporadas anteriores
+        return history.scorers(league, None)
     except Exception as e:
         return {"players": [], "error": str(e)}
+
+
+@app.get("/api/league/players")
+def league_players(league: int, season: str | None = None, order: str = "goals"):
+    try:
+        return history.scorers(league, season, order)
+    except Exception as e:
+        return {"players": [], "seasons": [], "error": str(e)}
 
 
 @app.get("/api/learning")
@@ -187,9 +215,41 @@ def standings(league: int, season: int | None = None, demo_mode: bool = Query(Fa
     if not season:
         return {"groups": []}
     try:
-        return {"groups": api.standings(league, season)}
-    except Exception as e:
-        return {"groups": [], "error": str(e)}
+        groups = api.standings(league, season)
+        if groups:
+            return {"groups": groups}
+    except Exception:
+        pass
+    return _computed_standings(league, season)
+
+
+def _computed_standings(league: int, season: int | None):
+    """Tabla calculada con los resultados guardados (cuando la API no la da)."""
+    res = leagues.matches(league, leagues.label(league, season) if season else None)
+    rows = [{"rank": e["rank"], "team": e["team"], "logo": e.get("logo"), "played": e["pj"], "win": e["g"], "draw": e["e"],
+             "lose": e["p"], "gf": e["gf"], "ga": e["gc"], "diff": e["dg"], "points": e["pts"], "form": e["form"], "zone": None}
+            for e in res["table"]]
+    return {"groups": [{"name": f"Tabla calculada · {res['season']}", "rows": rows}] if rows else [], "computed": True}
+
+
+@app.get("/api/leagues/directory")
+def leagues_directory():
+    return {"leagues": leagues.directory()}
+
+
+@app.get("/api/league/matches")
+def league_matches(league: int, season: str | None = None):
+    out = leagues.matches(league, season)
+    out["seasons"] = leagues.seasons(league)
+    return out
+
+
+@app.get("/api/league/clubs")
+def league_clubs(league: int):
+    try:
+        return {"clubs": history.clubs_of(league)}
+    except Exception:
+        return {"clubs": []}
 
 
 @app.get("/api/h2h")

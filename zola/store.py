@@ -123,6 +123,12 @@ class Store:
                 hg INTEGER, ag INTEGER, oh DOUBLE PRECISION, od DOUBLE PRECISION, oa DOUBLE PRECISION,
                 tournament TEXT, PRIMARY KEY (code, day, home, away))""",
             "CREATE INDEX IF NOT EXISTS ix_hist_code ON history (code, season)",
+            """CREATE TABLE IF NOT EXISTS players_season (
+                league_id BIGINT NOT NULL, season TEXT NOT NULL, player_id TEXT NOT NULL, name TEXT, club TEXT,
+                club_logo TEXT, photo TEXT, goals INTEGER, assists INTEGER, games INTEGER, minutes INTEGER, source TEXT,
+                PRIMARY KEY (league_id, season, player_id))""",
+            """CREATE TABLE IF NOT EXISTS clubs_info (
+                club_id TEXT PRIMARY KEY, name TEXT, league_id BIGINT, stadium TEXT, seats INTEGER, coach TEXT)""",
         ]
         for s in stmts:
             self.x(s)

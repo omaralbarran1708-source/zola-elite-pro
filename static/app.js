@@ -630,40 +630,89 @@ function renderRail() {
 // ================= vista LIGAS =================
 async function viewLeagues() {
   const app = $("#app");
-  if (!S.loaded) { app.innerHTML = '<div class="card pad"><div class="sk" style="height:300px"></div></div>'; return; }
+  if (!S.dir) {
+    app.innerHTML = '<div class="card pad"><div class="sk" style="height:300px"></div></div>';
+    try { S.dir = (await getJSON("/api/leagues/directory")).leagues; } catch { S.dir = []; }
+    if (S.view !== "leagues") return;
+  }
   const comps = new Map();
   for (const m of S.matches) { const k = String(m.league_id ?? m.league); if (!comps.has(k)) comps.set(k, { m, n: 0, live: 0 }); const c = comps.get(k); c.n++; if (m.live) c.live++; }
-  const order = [...comps.entries()].sort((a, b) => {
+  const today = [...comps.entries()].sort((a, b) => {
     const pa = S.pins.has(a[0]) ? 0 : 1, pb = S.pins.has(b[0]) ? 0 : 1;
     if (pa !== pb) return pa - pb;
     const ia = LEAGUE_PRIORITY.indexOf(a[1].m.league_id), ib = LEAGUE_PRIORITY.indexOf(b[1].m.league_id);
     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a[1].m.league.localeCompare(b[1].m.league);
   });
-  if (!order.length) { app.innerHTML = `<div class="card">${emptyHtml(I("trophy"), "No hay competiciones este día", "Cambia la fecha en Resultados.")}</div>`; return; }
-  if (!S.league || !comps.has(S.league)) S.league = order[0][0];
-  const sel = comps.get(S.league).m;
-  app.innerHTML = `<div class="crumb">Competiciones con partidos · ${dayName(S.date)} ${dayShort(S.date)}</div>
-    <div class="lgrid" style="margin-bottom:16px">${order.map(([k, c]) => `<button class="litem${k === S.league ? " on" : ""}" data-act="league" data-id="${esc(k)}">
-      <img src="${img(c.m.league_logo, c.m.league)}" alt=""><div><div class="nm">${esc(c.m.league)}</div><div class="ct">${esc(countryName(c.m))}</div></div>
-      <span class="n">${c.live ? `<span style="color:var(--red)">${c.live} en vivo</span> · ` : ""}${c.n}</span></button>`).join("")}</div>
-    <div class="card" id="lgcard">
+  if (!S.league) S.league = "281";
+  const fromDir = S.dir.find((d) => String(d.league_id) === S.league);
+  const fromToday = comps.get(S.league)?.m;
+  const sel = fromToday ? { ...fromDir, ...fromToday } : fromDir;
+  const item = (k, m, right) => `<button class="litem${k === S.league ? " on" : ""}" data-act="league" data-id="${esc(k)}">
+      <img src="${img(m.league_logo, m.league)}" alt=""><div><div class="nm">${esc(m.league)}</div><div class="ct">${esc(m.country || countryName(m))}</div></div>${right || ""}</button>`;
+  app.innerHTML = `
+    <div class="crumb">${I("trophy")} Ligas principales · historial, tablas, goleadores y resultados anteriores</div>
+    <div class="lgrid" style="margin-bottom:16px">${S.dir.map((d) => item(String(d.league_id), d, comps.has(String(d.league_id)) ? `<span class="n">${comps.get(String(d.league_id)).n} hoy</span>` : "")).join("")}</div>
+    ${sel ? leaguePage(sel, comps.has(S.league)) : `<div class="card">${emptyHtml(I("trophy"), "Elige una liga", "")}</div>`}
+    ${today.length ? `<details class="card pad" style="margin-top:16px"><summary class="sec-title" style="cursor:pointer">Otras competiciones con partidos hoy (${today.length})</summary>
+      <div class="lgrid" style="margin-top:12px">${today.map(([k, c]) => item(k, c.m, `<span class="n">${c.live ? `<span style="color:var(--red)">${c.live} en vivo</span> · ` : ""}${c.n}</span>`)).join("")}</div></details>` : ""}`;
+  if (!sel) return;
+  if (window.innerWidth < 900 && location.hash.split("/").length > 2) setTimeout(() => $("#lgcard")?.scrollIntoView({ behavior: "smooth" }), 50);
+  S.lg = S.lg && S.lg.id === S.league ? S.lg : { id: S.league, season: null, page: 1, order: "goals", pseason: null };
+  loadLeagueMatches(sel); loadScorers(sel); loadPastSeasons(sel); loadClubs(sel);
+  const st = await loadStandings(sel.league_id, sel.season || sel.current_season, sel.source === "demo");
+  const t = $("#lgTable");
+  if (t) t.innerHTML = st.groups && st.groups.length ? standingsTable(st.groups) + (st.computed ? '<div class="muted" style="font-size:.74rem;margin-top:6px">Tabla calculada con los resultados guardados.</div>' : "")
+    : emptyHtml(I("list-ordered"), "Sin tabla todavía", "Se arma sola a medida que ZOLA guarda resultados.");
+}
+function leaguePage(sel, hasToday) {
+  return `<div class="card" id="lgcard">
       <div class="lpage"><img class="lg" src="${img(sel.league_logo, sel.league)}" alt=""><div>
         <div class="nm">${esc(sel.league)}</div>
-        <div class="ct">${sel.flag ? `<img src="${img(sel.flag, sel.country)}" alt="">` : I("globe")}${esc(countryName(sel))}${sel.season ? ` · Temporada ${sel.season}/${sel.season + 1}` : ""}</div></div>
-        <button class="btn" style="margin-left:auto" data-act="pin" data-id="${esc(String(sel.league_id ?? sel.league))}">${S.pins.has(String(sel.league_id)) ? I("pin") + " Fijada" : I("pin") + " Fijar arriba"}</button></div>
+        <div class="ct">${sel.flag ? `<img src="${img(sel.flag, sel.country)}" alt="">` : I("globe")}${esc(sel.country || countryName(sel))}</div></div>
+        <button class="btn" style="margin-left:auto" data-act="pin" data-id="${esc(String(sel.league_id))}">${S.pins.has(String(sel.league_id)) ? I("pin") + " Fijada" : I("pin") + " Fijar arriba"}</button></div>
       <div class="lgcols">
-        <div><div class="sec-title">Clasificación</div><div id="lgTable"><div class="sk" style="height:300px"></div></div></div>
-        <div><div class="sec-title">Partidos · ${dayName(S.date)}</div><div style="border:1px solid var(--line);border-radius:14px;overflow:hidden">${S.matches.filter((m) => String(m.league_id ?? m.league) === S.league).map(matchRow).join("")}</div>
-          <div class="sec-title" style="margin-top:16px">Goleadores</div><div id="lgScorers"><div class="sk" style="height:200px"></div></div></div>
+        <div><div class="sec-title">Clasificación</div><div id="lgTable"><div class="sk" style="height:300px"></div></div>
+          <div class="sec-title" style="margin-top:18px;display:flex;align-items:center;gap:8px">${I("clock")} Resultados <select id="lgSeason" class="mini"></select></div><div id="lgMatches"><div class="sk" style="height:240px"></div></div></div>
+        <div>${hasToday ? `<div class="sec-title">Partidos · ${dayName(S.date)}</div><div style="border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-bottom:16px">${S.matches.filter((m) => String(m.league_id ?? m.league) === String(sel.league_id)).map(matchRow).join("")}</div>` : ""}
+          <div class="sec-title" style="display:flex;align-items:center;gap:8px">Jugadores <span class="segm"><button data-act="porder" data-o="goals" class="${S.lg?.order !== "assists" ? "on" : ""}">Goles</button><button data-act="porder" data-o="assists" class="${S.lg?.order === "assists" ? "on" : ""}">Asistencias</button></span><select id="lgPSeason" class="mini"></select></div>
+          <div id="lgScorers"><div class="sk" style="height:200px"></div></div>
+          <div id="lgClubs"></div></div>
       </div>
-      <div id="lgHist"></div>
-      </div></div>`;
-  if (window.innerWidth < 900 && location.hash.split("/").length > 2) setTimeout(() => $("#lgcard")?.scrollIntoView({ behavior: "smooth" }), 50);
-  loadScorers(sel);
-  loadPastSeasons(sel);
-  const st = await loadStandings(sel.league_id, sel.season, sel.source === "demo");
-  const t = $("#lgTable");
-  if (t) t.innerHTML = st.groups && st.groups.length ? standingsTable(st.groups) : emptyHtml(I("list-ordered"), "Sin tabla de posiciones", "Esta competición no tiene tabla disponible.");
+      <div id="lgHist"></div></div>`;
+}
+async function loadLeagueMatches(sel) {
+  const el = $("#lgMatches"); if (!el) return;
+  const L = S.lg;
+  try {
+    const j = await getJSON(`/api/league/matches?league=${sel.league_id}${L.season ? `&season=${encodeURIComponent(L.season)}` : ""}`);
+    const ss = $("#lgSeason");
+    if (ss) { ss.innerHTML = (j.seasons || []).map((x) => `<option ${x === j.season ? "selected" : ""}>${esc(x)}</option>`).join("");
+      ss.onchange = (e) => { L.season = e.target.value; L.page = 1; loadLeagueMatches(sel); }; }
+    const ms = j.matches || [], shown = ms.slice(0, L.page * 20);
+    if (!ms.length) { el.innerHTML = emptyHtml(I("clock"), "Sin resultados guardados de esta temporada", "ZOLA los irá sumando día a día."); return; }
+    let last = "";
+    el.innerHTML = `<div class="results">${shown.map((x) => {
+      const day = x.date, head = day !== last ? `<div class="rday">${new Date(day + "T12:00:00").toLocaleDateString("es-PE", { weekday: "short", day: "2-digit", month: "short", year: "numeric" })}${x.round ? ` · ${esc(x.round)}` : ""}</div>` : "";
+      last = day;
+      const hw = x.home_goals > x.away_goals, aw = x.away_goals > x.home_goals;
+      const tag = x.match_key ? `a href="#/partido/${esc(x.match_key)}"` : "div";
+      return `${head}<${tag} class="rrow"><span class="t r ${hw ? "w" : ""}"><span>${esc(x.home)}</span><img src="${img(x.home_logo, x.home)}" alt=""></span>
+        <span class="sc">${x.home_goals}-${x.away_goals}</span><span class="t ${aw ? "w" : ""}"><img src="${img(x.away_logo, x.away)}" alt=""><span>${esc(x.away)}</span></span></${x.match_key ? "a" : "div"}>`;
+    }).join("")}</div>
+      <div class="muted" style="font-size:.74rem;margin:8px 0">${ms.length} partidos · fuente: ${j.source === "api" ? "API-Football (guardado)" : "historial"}</div>
+      ${ms.length > shown.length ? `<button class="btn block" id="lgMore">Ver más resultados</button>` : ""}`;
+    const more = $("#lgMore"); if (more) more.onclick = () => { L.page++; loadLeagueMatches(sel); };
+  } catch { el.innerHTML = emptyHtml(I("clock"), "No se pudieron cargar los resultados", ""); }
+}
+async function loadClubs(sel) {
+  const el = $("#lgClubs"); if (!el) return;
+  try {
+    const j = await getJSON(`/api/league/clubs?league=${sel.league_id}`), cs = j.clubs || [];
+    if (!cs.length) return;
+    el.innerHTML = `<div class="sec-title" style="margin-top:18px">${I("map-pin")} Clubes y estadios</div><div class="scorers">${cs.map((c) => `<div class="srow">
+      <img src="${img(null, c.name)}" alt=""><div class="snm"><b>${esc(c.name)}</b><span class="muted">${esc(c.stadium || "—")}${c.coach ? ` · DT ${esc(c.coach)}` : ""}</span></div>
+      <span class="muted">${c.seats ? Number(c.seats).toLocaleString("es-PE") + " asientos" : ""}</span></div>`).join("")}</div>`;
+  } catch {}
 }
 
 // ---------- probabilidad en vivo (historial guardado) ----------
@@ -700,13 +749,20 @@ function shortName(n) { n = String(n || ""); const p = n.split(" "); return p.le
 // ---------- goleadores ----------
 async function loadScorers(sel) {
   const el = $("#lgScorers"); if (!el) return;
+  const L = S.lg || {};
   try {
-    const j = await getJSON(`/api/topscorers?league=${sel.league_id}&season=${sel.season || ""}&demo=${sel.source === "demo"}`);
-    const ps = (j.players || []).slice(0, 10);
+    let j;
+    if (!L.pseason && L.order !== "assists") j = await getJSON(`/api/topscorers?league=${sel.league_id}&season=${sel.season || sel.current_season || ""}&demo=${sel.source === "demo"}`);
+    if (!j || !(j.players || []).length) j = await getJSON(`/api/league/players?league=${sel.league_id}&order=${L.order || "goals"}${L.pseason ? `&season=${encodeURIComponent(L.pseason)}` : ""}`);
+    const sp = $("#lgPSeason");
+    if (sp) { sp.hidden = !(j.seasons || []).length; sp.innerHTML = (j.seasons || []).map((x) => `<option ${x === j.season ? "selected" : ""}>${esc(x)}</option>`).join("");
+      sp.onchange = (e) => { L.pseason = e.target.value; loadScorers(sel); }; }
+    const ps = (j.players || []).slice(0, 12), ast = L.order === "assists";
     el.innerHTML = ps.length ? `<div class="scorers">${ps.map((p, i) => `<div class="srow"><span class="pos">${i + 1}</span>
-      <img src="${img(p.team_logo, p.team)}" alt=""><div class="snm"><b>${esc(p.name)}</b><span class="muted">${esc(p.team)}</span></div>
-      <span class="muted" title="Asistencias">🅰 ${p.assists ?? 0}</span><span class="sg">${p.goals}</span></div>`).join("")}</div>` : emptyHtml("⚽", "Sin goleadores", "");
-  } catch { el.innerHTML = emptyHtml("⚽", "Sin goleadores", ""); }
+      <img src="${img(p.team_logo, p.team)}" alt=""><div class="snm"><b>${esc(p.name)}</b><span class="muted">${esc(p.team || "")}${p.games ? ` · ${p.games} PJ` : ""}</span></div>
+      <span class="muted" title="${ast ? "Goles" : "Asistencias"}">${ast ? `${p.goals} G` : `${p.assists ?? 0} A`}</span><span class="sg">${ast ? p.assists : p.goals}</span></div>`).join("")}</div>
+      ${j.season ? `<div class="muted" style="font-size:.74rem;margin-top:6px">Temporada ${esc(j.season)}</div>` : ""}` : emptyHtml(I("trophy"), "Sin datos de jugadores", "");
+  } catch { el.innerHTML = emptyHtml(I("trophy"), "Sin datos de jugadores", ""); }
 }
 
 // ---------- temporadas anteriores ----------
@@ -980,6 +1036,7 @@ document.addEventListener("click", (e) => {
   else if (a === "region") { S.region = t.dataset.r; renderList(); }
   else if (a === "day") setDate(addDays(S.date, +t.dataset.n));
   else if (a === "tab") { S.tab = t.dataset.t; $$(".tab").forEach((b) => b.classList.toggle("on", b.dataset.t === S.tab)); renderTab(); }
+  else if (a === "porder") { e.stopPropagation(); if (S.lg) { S.lg.order = t.dataset.o; S.lg.pseason = null; } $$("[data-act=porder]").forEach((b) => b.classList.toggle("on", b === t)); const sel = (S.dir || []).find((d) => String(d.league_id) === S.league); if (sel) loadScorers({ ...sel, ...(S.matches.find((m) => String(m.league_id) === S.league) || {}) }); }
   else if (a === "league") { e.stopPropagation(); $("#suggest").hidden = true; location.hash = `#/ligas/${t.dataset.id}`; }
   else if (a === "back") { history.length > 1 ? history.back() : (location.hash = "#/"); }
   else if (a === "share") { navigator.clipboard?.writeText(location.href).then(() => toast("🔗 Enlace copiado", "", 1800), () => {}); }
