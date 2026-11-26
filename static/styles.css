@@ -464,3 +464,16 @@ table.tbl{width:100%;border-collapse:collapse;font-size:.86rem}
 .risk{font-weight:800;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;padding:4px 10px;border-radius:99px}
 .risk.lo{background:rgba(20,164,77,.14);color:var(--green)}.risk.mid{background:rgba(245,158,11,.16);color:#b7791f}.risk.hi{background:rgba(229,72,77,.14);color:var(--red)}
 .riskcard{margin-bottom:14px}.rkgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.rkgrid .l{font-size:.72rem;color:var(--muted);font-weight:700;text-transform:uppercase}.rkgrid .v{font-size:1.15rem;font-weight:800;margin-top:2px}
+
+/* íconos Lucide */
+svg.ico{width:1.1em;height:1.1em;vertical-align:-.17em;fill:none;stroke:currentColor;stroke-width:2.1;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.empty .i svg.ico{width:42px;height:42px;stroke-width:1.6;color:var(--muted)}
+.bottomnav b svg.ico{width:22px;height:22px}
+.pick .ic svg.ico{width:28px;height:28px;color:var(--brand,#2f55f5)}
+.hbtn svg.ico{width:20px;height:20px}
+
+/* accesibilidad y respuesta táctil */
+:where(a,button,select,input,[data-act]):focus-visible{outline:2px solid var(--blue,#2f55f5);outline-offset:2px;border-radius:8px}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
+@media (hover:none){.circ,.star{min-width:40px;min-height:40px}}
+button:active:not(:disabled),.mrow:active{transform:scale(.985)}

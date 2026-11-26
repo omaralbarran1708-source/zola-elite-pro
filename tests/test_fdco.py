@@ -14,3 +14,10 @@ def test_names():
     assert match_name("Paris Saint Germain", TEAMS) == "Paris SG"
     assert match_name("Tottenham Hotspur", TEAMS) == "Tottenham"
     assert match_name("Real Madrid", TEAMS) is None
+
+
+def test_openfootball_style_names():
+    of = ["Manchester United FC", "Arsenal FC", "Brighton & Hove Albion FC", "Wolverhampton Wanderers FC", "Club Atlético de Madrid"]
+    assert match_name("Manchester United", of) == "Manchester United FC"
+    assert match_name("Wolves", of) == "Wolverhampton Wanderers FC"
+    assert match_name("Arsenal", of) == "Arsenal FC"

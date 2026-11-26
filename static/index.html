@@ -10,13 +10,13 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/styles.css?v=12">
+<link rel="stylesheet" href="/static/styles.css?v=14">
 <script>try{document.documentElement.dataset.theme=JSON.parse(localStorage.getItem("zola_theme"))||"light"}catch(e){}</script>
 </head>
 <body>
 <div class="trend-wrap">
   <div class="wrap trend">
-    <span class="trend-lbl" id="trendLbl">🔥 Destacados</span>
+    <span class="trend-lbl" id="trendLbl"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg?v=2#flame"/></svg> Destacados</span>
     <div class="trend-list" id="ticker"></div>
   </div>
 </div>
@@ -24,9 +24,9 @@
   <div class="wrap hdr-top">
     <a class="brand" href="#/" aria-label="ZOLA inicio"><img src="/static/zola_logo.svg" alt=""><span>ZOLA</span></a>
     <nav class="hnav" aria-label="Secciones">
-      <a href="#/" data-nav="matches">🗓️ <span>Resultados</span></a>
-      <a href="#/ligas" data-nav="leagues">🏆 <span>Ligas</span></a>
-      <a href="#/probar" data-nav="test">🧪 <span>Probar modelo</span></a>
+      <a href="#/" data-nav="matches"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg?v=2#calendar-days"/></svg> <span>Resultados</span></a>
+      <a href="#/ligas" data-nav="leagues"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg?v=2#trophy"/></svg> <span>Ligas</span></a>
+      <a href="#/probar" data-nav="test"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg?v=2#flask-conical"/></svg> <span>Probar modelo</span></a>
     </nav>
     <div class="search">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 2a8 8 0 0 1 6.3 12.9l5.4 5.4-1.4 1.4-5.4-5.4A8 8 0 1 1 10 2zm0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12z"/></svg>
@@ -36,7 +36,7 @@
     </div>
     <div class="hicons">
       <span class="apichip" id="apichip" title="Estado de los datos"><i></i><span>…</span></span>
-      <button class="hbtn" id="themeBtn" title="Cambiar tema" aria-label="Cambiar tema">🌙</button>
+      <button class="hbtn" id="themeBtn" title="Cambiar tema" aria-label="Cambiar tema"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg?v=2#moon"/></svg></button>
     </div>
   </div>
   <div class="wrap hdr-sub">
@@ -44,8 +44,8 @@
       <a class="sport on" href="#/">⚽ Fútbol</a>
     </div>
     <div class="subr">
-      <a href="#/mis-pronosticos" data-nav="picks">🎯 <span>Mis pronósticos</span><i class="navbadge" id="picksBadge" hidden></i></a>
-      <a href="#/" data-act="favs-shortcut">★ <span>Favoritos</span></a>
+      <a href="#/mis-pronosticos" data-nav="picks"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg?v=2#target"/></svg> <span>Mis pronósticos</span><i class="navbadge" id="picksBadge" hidden></i></a>
+      <a href="#/" data-act="favs-shortcut"><svg class="ico" aria-hidden="true"><use href="/static/icons.svg?v=2#star"/></svg> <span>Favoritos</span></a>
     </div>
   </div>
 </header>
@@ -53,12 +53,12 @@
 <main class="wrap" id="app" tabindex="-1"></main>
 
 <nav class="bottomnav" aria-label="Secciones">
-  <a href="#/" data-nav="matches"><b>🗓️</b>Resultados</a>
-  <a href="#/ligas" data-nav="leagues"><b>🏆</b>Ligas</a>
-  <a href="#/probar" data-nav="test"><b>🧪</b>Probar</a>
-  <a href="#/mis-pronosticos" data-nav="picks"><b>🎯</b>Mis picks</a>
+  <a href="#/" data-nav="matches"><b><svg class="ico" aria-hidden="true"><use href="/static/icons.svg?v=2#calendar-days"/></svg></b>Resultados</a>
+  <a href="#/ligas" data-nav="leagues"><b><svg class="ico" aria-hidden="true"><use href="/static/icons.svg?v=2#trophy"/></svg></b>Ligas</a>
+  <a href="#/probar" data-nav="test"><b><svg class="ico" aria-hidden="true"><use href="/static/icons.svg?v=2#flask-conical"/></svg></b>Probar</a>
+  <a href="#/mis-pronosticos" data-nav="picks"><b><svg class="ico" aria-hidden="true"><use href="/static/icons.svg?v=2#target"/></svg></b>Mis picks</a>
 </nav>
 <div class="toasts" id="toasts" aria-live="polite"></div>
-<script src="/static/app.js?v=12" defer></script>
+<script src="/static/app.js?v=14" defer></script>
 </body>
 </html>

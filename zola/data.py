@@ -111,7 +111,14 @@ def match_detail(api: FootballApi, match: dict) -> MatchDetail:
             return fn()
         except Exception as e:
             msg = str(e)
-            if "plan" in msg.lower() or "access" in msg.lower():
+            low = msg.lower()
+            if "suspended" in low or "too many" in low or "rate limit" in low:
+                msg = "API sin conexión por ahora (se usan datos guardados)"
+                if any(msg in w for w in warnings):
+                    return default
+                warnings.append(msg)
+                return default
+            if "plan" in low or "access" in low:
                 msg = "no incluido en el plan gratis de la API"
             warnings.append(f"{label}: {msg}")
             return default
@@ -119,7 +126,7 @@ def match_detail(api: FootballApi, match: dict) -> MatchDetail:
     league, season = match.get("league_id"), match.get("season")
     results = safe(lambda: api.league_results(league, season), [], "Resultados de la liga") if league and season else []
     results = merge_results(results, get_store().league_results(league, season))
-    if len(results) < 40 and league in fdco.LEAGUE_CODES:     # plan gratis: temporada actual desde football-data
+    if len(results) < 40 and fdco.covers(league):     # plan gratis: temporada actual desde football-data
         try:
             ko = date.fromisoformat((match.get("kickoff") or "")[:10])
         except ValueError:
