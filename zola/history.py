@@ -305,16 +305,18 @@ def backfill_dates(api, max_calls: int = 12, log=print) -> int:
     from datetime import timedelta
     st = get_store()
     cur = st.kv_get("backfill_cursor") or (date.today() - timedelta(days=1)).isoformat()
+    if st.kv_get("backfill_reset_v2") is None:        # corrige días saltados mientras la API estaba suspendida
+        cur = (date.today() - timedelta(days=1)).isoformat()
+        st.kv_set("backfill_reset_v2", True)
     d = date.fromisoformat(cur)
     stop = date(date.today().year, 1, 15)
     n = 0
     while n < max_calls and d >= stop and api.enabled and (api.remaining is None or api.remaining > 45):
         try:
             api.fixtures(d.isoformat(), False)
-        except Exception as e:
+        except Exception as e:      # API caída o bloqueada: no avanzar, reintentar en la próxima hora
             log(f"backfill {d}: {e}")
-            if "plan" in str(e).lower() or "access" in str(e).lower():
-                break
+            break
         n += 1
         d -= timedelta(days=1)
         st.kv_set("backfill_cursor", d.isoformat())
