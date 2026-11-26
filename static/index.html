@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ZOLA Elite · Marcadores en vivo y pronósticos</title>
+<meta name="description" content="Resultados en vivo, tablas y pronósticos de fútbol con modelo estadístico.">
+<meta name="theme-color" content="#0e1116">
+<link rel="icon" href="/static/zola_logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/styles.css?v=4">
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap topbar-in">
+    <a class="brand" href="#/" aria-label="ZOLA Elite inicio">
+      <img src="/static/zola_logo.png" alt="">
+      <span>ZOLA <b>Elite</b></span>
+    </a>
+    <nav class="mainnav" aria-label="Secciones">
+      <a href="#/" data-nav="matches">⚽ <span>Partidos</span></a>
+      <a href="#/ligas" data-nav="leagues">🏆 <span>Ligas</span></a>
+      <a href="#/mis-pronosticos" data-nav="picks">🎯 <span>Mis pronósticos</span><i class="navbadge" id="picksBadge" hidden></i></a>
+    </nav>
+    <div class="search">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 2a8 8 0 0 1 6.3 12.9l5.4 5.4-1.4 1.4-5.4-5.4A8 8 0 1 1 10 2zm0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12z"/></svg>
+      <input id="q" type="search" placeholder="Buscar equipo, liga o país" autocomplete="off" aria-label="Buscar">
+      <kbd>/</kbd>
+      <div class="suggest" id="suggest" hidden></div>
+    </div>
+    <div class="top-actions">
+      <span class="apichip" id="apichip" title="Estado de los datos"><i></i><span>Conectando…</span></span>
+      <button class="iconbtn" id="themeBtn" title="Cambiar tema" aria-label="Cambiar tema">🌙</button>
+    </div>
+  </div>
+  <div class="ticker-wrap"><div class="wrap ticker" id="ticker"></div></div>
+</header>
+
+<main class="wrap" id="app" tabindex="-1"></main>
+
+<nav class="bottomnav" aria-label="Secciones">
+  <a href="#/" data-nav="matches"><b>⚽</b>Partidos</a>
+  <a href="#/ligas" data-nav="leagues"><b>🏆</b>Ligas</a>
+  <a href="#/mis-pronosticos" data-nav="picks"><b>🎯</b>Pronósticos</a>
+</nav>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<footer class="wrap foot">ZOLA Elite · Las probabilidades son estimaciones de un modelo estadístico, no garantías. Apuesta con responsabilidad · +18</footer>
+<script src="/static/app.js?v=4" defer></script>
+</body>
+</html>

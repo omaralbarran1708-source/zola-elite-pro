@@ -1,42 +1,50 @@
 # ZOLA Elite
 
-Pronósticos de fútbol con datos reales de API-Football, en Streamlit.
+Marcadores en vivo, tablas de posiciones y pronósticos de fútbol con modelo estadístico.
 
-## Qué hace
+## Qué incluye
 
-- **Modelo real:** Poisson con corrección Dixon-Coles. La fuerza de cada equipo sale de sus goles a favor y en contra de la temporada (como local y como visita) y de su forma reciente. Si un equipo tiene pocos partidos, el modelo lo acerca al promedio de la liga.
-- **En vivo:** calcula solo los goles que faltan. Usa los minutos restantes, el ritmo del partido (xG o tiros al arco), el marcador (quien pierde ataca más) y las tarjetas rojas.
-- **Datos reales del partido:** eventos (goles, tarjetas, cambios), estadísticas y cuotas de API-Football (Bet365 por defecto). Ya no se inventa nada. Sin API key, la app muestra datos de demo marcados como **DEMO**.
-- **Apuestas de valor:** compara la probabilidad del modelo con la cuota y calcula la ventaja. Descarta los mercados que ya están decididos.
-- **Simulador:** valor esperado y stake sugerido con ¼ de Kelly según tu bankroll.
-- **Historial con aciertos:** guardas una predicción con un botón y no se duplica. Cuando el partido termina, la app marca ✅ o ❌ y calcula el porcentaje de acierto y las unidades ganadas.
+- **Partidos:** días para elegir, filtros (en vivo, próximos, terminados, favoritos), región, ligas fijadas arriba, barra de partidos en vivo y aviso cuando hay gol.
+- **Detalle del partido:**
+  - **Resumen:** quién gana, cuotas 1X2, apuesta de valor y análisis.
+  - **Pronóstico:** mapa de marcadores y mercados.
+  - **Estadísticas:** del partido y de la temporada.
+  - **Eventos:** línea de tiempo del partido.
+  - **Cara a cara.**
+  - **Clasificación.**
+  - **Cuotas.**
+  - **Simulador:** con criterio Kelly.
+- **Ligas:** competiciones del día con su tabla y sus partidos.
+- **Mis pronósticos:** se guardan en el navegador y se cierran solos al terminar el partido (acierto %, unidades y evolución).
+- **Temas:** claro y oscuro. La página se adapta a celular, con navegación inferior.
+- **Actualización:** se refresca sola (lista cada 60 s, partido en vivo cada 45 s).
+
+## Modelo
+
+Poisson con corrección Dixon-Coles. Usa los promedios reales de goles de la temporada (local/visita) y la forma reciente. En vivo, se ajusta según el tiempo restante, el ritmo del partido (xG o tiros al arco), el marcador y las tarjetas rojas. Compara la probabilidad del modelo con la cuota para encontrar apuestas de valor.
 
 ## Estructura
 
 ```
-app.py            interfaz
-zola/model.py     modelo (Poisson + Dixon-Coles + ajuste en vivo + valor/Kelly)
-zola/api.py       cliente de API-Football con caché (cuida las 100 consultas/día del plan gratis)
-zola/data.py      une API/demo con el modelo, filtros y cierre del historial
-zola/db.py        historial SQLite
-zola/status.py    estados de partido y grupos de ligas (por ID)
-zola/demo.py      datos de demo
-tests/            pruebas (pytest)
+server.py         servidor (FastAPI): API JSON + logos en caché + interfaz
+static/           interfaz (HTML, CSS, JS)
+zola/model.py     modelo
+zola/api.py       cliente de API-Football con caché
+zola/data.py      datos (API real o demo)
+zola/demo.py      datos de demostración
+tests/            pruebas
 ```
 
 ## Uso local
 
 ```bash
 pip install -r requirements-dev.txt
-streamlit run app.py
+API_FOOTBALL_KEY=tu_key uvicorn server:app --reload
 pytest -q
 ```
 
-La API key se toma, en este orden, de `.streamlit/secrets.toml`, de la variable de entorno `API_FOOTBALL_KEY` o del panel ⚙️ Configuración.
+Sin `API_FOOTBALL_KEY` la página funciona en modo demo.
 
 ## Render
 
-`render.yaml` ya está listo. En Render, agrega `API_FOOTBALL_KEY` en *Environment*.
-Ojo: en el plan gratis el disco se borra en cada deploy o reinicio, así que el historial no se conserva. Si quieres conservarlo, agrega un disco y apunta `ZOLA_DB_PATH` a él.
-
-> Las probabilidades son estimaciones, no garantías. +18.
+`render.yaml` ya está listo. El comando de arranque es `uvicorn server:app --host 0.0.0.0 --port $PORT`. Pon `API_FOOTBALL_KEY` en *Environment*.

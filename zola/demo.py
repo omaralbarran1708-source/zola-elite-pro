@@ -168,3 +168,21 @@ STANDINGS = {
         _row(17, "Alianza Atlético", None, 15, 2, 4, 9, 9, 24, "LLDLL", "Relegation"),
     ]}],
 }
+
+
+def head_to_head(home: str, away: str, home_logo=None, away_logo=None) -> list[dict]:
+    """Últimos cruces de ejemplo (DEMO, inventados pero estables por equipo)."""
+    import hashlib
+    seed = int(hashlib.md5(f"{home}|{away}".encode()).hexdigest(), 16)
+    out = []
+    for i in range(5):
+        r = (seed >> (i * 6)) & 63
+        hg, ag = r % 4, (r // 4) % 3
+        swap = i % 2 == 1
+        out.append({
+            "match_key": f"demo_h2h_{i}", "fixture_id": None, "kickoff": f"{2026 - i}-0{(i % 9) + 1}-15T20:00:00-05:00",
+            "league": "Amistoso / Liga", "home": away if swap else home, "away": home if swap else away,
+            "home_logo": away_logo if swap else home_logo, "away_logo": home_logo if swap else away_logo,
+            "home_goals": hg, "away_goals": ag, "status_short": "FT", "source": "demo",
+        })
+    return out

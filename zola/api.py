@@ -108,9 +108,14 @@ class FootballApi:
             res = self._get("odds", fixture=fixture_id)
         return parse_prematch_odds(res)
 
-    @ttl_cache(3600)
-    def standings(self, league_id: int, season: int) -> list[dict]:
-        return normalize_standings(self._get("standings", league=league_id, season=season))
+    @ttl_cache(12 * 3600)
+    def head_to_head(self, home_id: int, away_id: int) -> list[dict]:
+        res = self._get("fixtures/headtohead", h2h=f"{home_id}-{away_id}", last=6, timezone=TIMEZONE)
+        return [normalize_fixture(x) for x in res]
+
+    @ttl_cache(120)
+    def fixtures_by_ids(self, ids: tuple) -> list[dict]:
+        return [normalize_fixture(x) for x in self._get("fixtures", ids="-".join(str(i) for i in ids), timezone=TIMEZONE)]
 
     @ttl_cache(60)
     def live_odds(self, fixture_id: int) -> dict:
@@ -313,27 +318,4 @@ def normalize_standings(res: list) -> list[dict]:
                 })
             if rows:
                 groups.append({"name": rows[0]["group"], "rows": rows})
-    return groups
-
-
-def normalize_standings(res: list) -> list[dict]:
-    """Lista de grupos: [{"name": str, "rows": [...]}]."""
-    groups = []
-    for item in res or []:
-        for table in (item.get("league") or {}).get("standings") or []:
-            rows = []
-            for r in table:
-                al = r.get("all") or {}
-                g = al.get("goals") or {}
-                team = r.get("team") or {}
-                rows.append({
-                    "rank": r.get("rank"), "team": team.get("name", ""), "team_id": team.get("id"),
-                    "logo": team.get("logo"), "played": al.get("played") or 0, "win": al.get("win") or 0,
-                    "draw": al.get("draw") or 0, "lose": al.get("lose") or 0,
-                    "gf": g.get("for") or 0, "ga": g.get("against") or 0,
-                    "diff": r.get("goalsDiff") or 0, "points": r.get("points") or 0,
-                    "form": r.get("form") or "", "zone": r.get("description") or "",
-                })
-            if rows:
-                groups.append({"name": (table[0].get("group") or ""), "rows": rows})
     return groups

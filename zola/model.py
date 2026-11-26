@@ -76,6 +76,7 @@ class Prediction:
     value_bets: list = field(default_factory=list)
     best_bet: dict | None = None
     notes: list = field(default_factory=list)
+    matrix: list = field(default_factory=list)   # P(marcador final) 0..5 x 0..5
 
 
 def _shrink(rate: float | None, games: int, prior: float) -> float:
@@ -290,4 +291,5 @@ def predict(home_name: str, away_name: str, home: TeamForm, away: TeamForm,
         top_scores=top, best_score=top[0][0] if top else "0-0",
         winner=winner, confidence=confidence, data_quality=quality,
         markets=markets, value_bets=value_bets, best_bet=best_bet, notes=notes,
+        matrix=[[round(float(m[a, b]), 5) for b in range(6)] for a in range(6)],
     )
