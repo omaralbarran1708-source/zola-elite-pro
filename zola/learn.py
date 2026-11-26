@@ -87,5 +87,12 @@ def learned_weight(league_id=None) -> float:
     if time.time() - _cache["ts"] > 3600:
         _cache["weights"] = get_store().kv_get("market_weights", {}) or {}
         _cache["ts"] = time.time()
+        _cache["hist"] = get_store().kv_get("history_learning", {}) or {}
     w = _cache["weights"]
-    return float(w.get(str(league_id), w.get("global", MARKET_WEIGHT)))
+    if str(league_id) in w:
+        return float(w[str(league_id)])
+    from .fdco import LEAGUE_CODES       # aprendido con temporadas anteriores de esa liga
+    h = (_cache.get("hist") or {}).get(LEAGUE_CODES.get(league_id, ""), {})
+    if h.get("weight") is not None:
+        return float(h["weight"])
+    return float(w.get("global", MARKET_WEIGHT))

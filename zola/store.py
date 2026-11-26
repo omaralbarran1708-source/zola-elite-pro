@@ -83,6 +83,19 @@ class Store:
                 return self._exec(sql, params, fetch, retry=False)
             raise
 
+    def xmany(self, sql, rows: list) -> None:
+        """Inserta muchas filas de una vez (importación de historial)."""
+        if not rows:
+            return
+        c = self._conn()
+        if self.pg:
+            with c.cursor() as cur:
+                cur.executemany(self._sql(sql), rows)
+        else:
+            with self._lock:
+                c.executemany(sql, rows)
+                c.commit()
+
     def q(self, sql, params=()):
         return self._exec(sql, params, fetch=True)
 
@@ -105,6 +118,11 @@ class Store:
                 league_id BIGINT, home TEXT, away TEXT, score TEXT, data TEXT,
                 PRIMARY KEY (fixture_id, kind, minute))""",
             "CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT, ts DOUBLE PRECISION)",
+            """CREATE TABLE IF NOT EXISTS history (
+                code TEXT NOT NULL, season TEXT, day TEXT NOT NULL, home TEXT NOT NULL, away TEXT NOT NULL,
+                hg INTEGER, ag INTEGER, oh DOUBLE PRECISION, od DOUBLE PRECISION, oa DOUBLE PRECISION,
+                tournament TEXT, PRIMARY KEY (code, day, home, away))""",
+            "CREATE INDEX IF NOT EXISTS ix_hist_code ON history (code, season)",
         ]
         for s in stmts:
             self.x(s)

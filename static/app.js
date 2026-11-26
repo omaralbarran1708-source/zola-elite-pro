@@ -531,7 +531,7 @@ function tabH2H(m) {
   let w = 0, dr = 0, l = 0;
   for (const x of list) { const hg = x.home === m.home ? x.home_goals : x.away_goals, ag = x.home === m.home ? x.away_goals : x.home_goals; hg > ag ? w++ : hg === ag ? dr++ : l++; }
   const t = list.length;
-  return `<div class="box"><h4>Últimos ${t} cruces</h4><div class="s">Resultados entre ambos equipos</div>
+  return `<div class="box"><h4>Últimos ${t} cruces</h4><div class="s">Resultados entre ambos equipos${st.source === "historial" ? " · historial de años anteriores" : ""}</div>
     <div class="h2hsum"><div><b style="color:var(--brand-ink)">${w}</b><span>${esc(m.home)}</span></div><div><b>${dr}</b><span>Empates</span></div><div><b style="color:var(--orange)">${l}</b><span>${esc(m.away)}</span></div></div>
     <div class="h2hbar"><div style="width:${w / t * 100}%;background:var(--brand)"></div><div style="width:${dr / t * 100}%;background:var(--grey)"></div><div style="width:${l / t * 100}%;background:var(--orange)"></div></div>
     ${list.map((x) => `<div class="h2hrow"><span class="d">${x.kickoff ? new Date(x.kickoff).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "2-digit" }) : ""}</span>
@@ -655,9 +655,12 @@ async function viewLeagues() {
         <div><div class="sec-title">Clasificación</div><div id="lgTable"><div class="sk" style="height:300px"></div></div></div>
         <div><div class="sec-title">Partidos · ${dayName(S.date)}</div><div style="border:1px solid var(--line);border-radius:14px;overflow:hidden">${S.matches.filter((m) => String(m.league_id ?? m.league) === S.league).map(matchRow).join("")}</div>
           <div class="sec-title" style="margin-top:16px">Goleadores</div><div id="lgScorers"><div class="sk" style="height:200px"></div></div></div>
+      </div>
+      <div id="lgHist"></div>
       </div></div>`;
   if (window.innerWidth < 900 && location.hash.split("/").length > 2) setTimeout(() => $("#lgcard")?.scrollIntoView({ behavior: "smooth" }), 50);
   loadScorers(sel);
+  loadPastSeasons(sel);
   const st = await loadStandings(sel.league_id, sel.season, sel.source === "demo");
   const t = $("#lgTable");
   if (t) t.innerHTML = st.groups && st.groups.length ? standingsTable(st.groups) : emptyHtml(I("list-ordered"), "Sin tabla de posiciones", "Esta competición no tiene tabla disponible.");
@@ -706,6 +709,22 @@ async function loadScorers(sel) {
   } catch { el.innerHTML = emptyHtml("⚽", "Sin goleadores", ""); }
 }
 
+// ---------- temporadas anteriores ----------
+async function loadPastSeasons(sel) {
+  const el = $("#lgHist"); if (!el || !sel.league_id) return;
+  try {
+    const j = await getJSON(`/api/history/league?league=${sel.league_id}`), ss = j.seasons || [];
+    if (!ss.length) return;
+    el.innerHTML = `<div class="sec-title" style="margin-top:22px">${I("trophy")} Temporadas anteriores</div>
+      <div class="pastgrid">${ss.map((x) => `<div class="past">
+        <div class="ps">${esc(x.season)}</div>
+        <div class="pc"><span class="cup">${I("trophy")}</span><b>${esc(x.champion.team)}</b><span class="muted">${x.champion.pts} pts</span></div>
+        <div class="pr muted">2.º ${esc(x.runner_up.team)} (${x.runner_up.pts}) · Más goles: ${esc(x.top_attack.team)} (${x.top_attack.gf})</div>
+        <div class="pm"><span>${x.matches} partidos</span><span>${x.goals_avg} goles/partido</span><span>Gana local ${pct(x.home_win)}</span></div>
+      </div>`).join("")}</div>`;
+  } catch {}
+}
+
 // ---------- aprendizaje ----------
 async function loadLearning() {
   const el = $("#learnBox"); if (!el) return;
@@ -719,8 +738,18 @@ async function loadLearning() {
         .map(([l, v]) => `<div class="kpi"><div class="l">${l}</div><div class="v">${n(v)}</div></div>`).join("")}</div>
       <p class="muted" style="font-size:.82rem;margin:10px 0">Almacenamiento: <b>${st.backend === "postgres" ? "Base de datos permanente" : "Local"}</b>${st.ok === false ? " (error)" : ""} ·
         Peso del mercado aprendido: <b>${pct(j.current_weight)}</b>${ev.n < ev.min_samples ? ` · aprende desde ${ev.min_samples} partidos evaluados (${ev.n || 0} ahora)` : ""}</p>
+      ${histHtml(j.history)}
       ${sys ? `<table class="tbl"><thead><tr><th>Sistema</th><th>Acierto 1X2</th><th>Log-loss</th></tr></thead><tbody>${sys}</tbody></table>` : ""}`;
   } catch { el.innerHTML = ""; }
+}
+
+function histHtml(h) {
+  if (!h) return "";
+  const n = (v) => Number(v || 0).toLocaleString("es-PE");
+  const L = Object.entries(h.learned || {});
+  return `<div class="histbox"><div><b>${n(h.rows)}</b> partidos históricos guardados${h.running ? ` · <span class="muted">${esc(h.step)}…</span>` : ""}
+      ${h.by_code && h.by_code.INT ? ` · <span class="muted">${n(h.by_code.INT)} de selecciones</span>` : ""}</div>
+    ${L.length ? `<div class="muted" style="font-size:.78rem;margin-top:4px">Peso del mercado aprendido por liga: ${L.map(([c, v]) => `${esc(c)} ${pct(v.weight)}`).join(" · ")}</div>` : ""}</div>`;
 }
 
 // ================= vista PROBAR MODELO =================

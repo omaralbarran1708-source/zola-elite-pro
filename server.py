@@ -15,10 +15,12 @@ from fastapi.staticfiles import StaticFiles
 
 from zola import backtest as bt
 from zola import strength
+from zola import history
 from zola import demo
 from zola.api import FootballApi
 from zola.data import LAST_RATINGS, build_state, list_matches, match_detail
 import threading
+import time
 
 from zola import learn
 from zola.logos import crest_bytes, logo_bytes, prefetch
@@ -85,6 +87,7 @@ def _warm():
     _bg(prefetch, [f"https://media.api-sports.io/football/leagues/{i}.png" for i in WARM_LEAGUES])
     _bg(strength._table)
     _bg(strength.elo_table)
+    _bg(lambda: (time.sleep(45), history.run_import()))
 
 
 @app.get("/api/status")
@@ -173,6 +176,7 @@ def learning():
     """Lo que el sistema ya guardó y aprendió."""
     ev = learn.evaluate()
     return {"storage": get_store().stats(), "evaluation": ev, "api_calls_session": api.calls,
+            "history": history.status(),
             "current_weight": learn.learned_weight()}
 
 
@@ -198,9 +202,34 @@ def h2h(key: str, day: str | None = Query(None, alias="date")):
         return {"matches": demo.head_to_head(m["home"], m["away"], m.get("home_logo"), m.get("away_logo"))}
     try:
         res = api.head_to_head(int(m["home_id"]), int(m["away_id"]))
-        return {"matches": [_slim(x) for x in res if is_finished(x["status_short"])][:6]}
+        out = [_slim(x) for x in res if is_finished(x["status_short"])][:6]
+        if out:
+            return {"matches": out}
+    except Exception:
+        pass
+    try:   # historial guardado de años anteriores (sin gastar la API)
+        hist = history.h2h(m.get("league_id"), m["home"], m["away"])
+        for x in hist:
+            x.update(kickoff=x["date"] + "T12:00:00", home_logo=m.get("home_logo") if x["home"] == m["home"] else m.get("away_logo"),
+                     away_logo=m.get("away_logo") if x["away"] == m["away"] else m.get("home_logo"))
+        return {"matches": hist, "source": "historial"}
     except Exception as e:
         return {"matches": [], "error": str(e)}
+
+
+@app.get("/api/history/league")
+def history_league(league: int):
+    try:
+        return {"seasons": history.past_seasons(league)}
+    except Exception as e:
+        return {"seasons": [], "error": str(e)}
+
+
+@app.get("/api/history/status")
+def history_status(run: bool = False):
+    if run:
+        _bg(history.run_import, True)
+    return history.status()
 
 
 @app.get("/api/results")

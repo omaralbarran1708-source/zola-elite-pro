@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
-from . import demo, fdco, strength
+from . import demo, fdco, history, strength
 from .api import ApiError, FootballApi
 from .model import LiveState, TeamForm
 from .ratings import Ratings, fit
@@ -165,6 +165,14 @@ def match_detail(api: FootballApi, match: dict) -> MatchDetail:
         odds = {}
     else:
         odds = safe(lambda: api.odds(fid), {}, "Cuotas")
+    if lambdas is None and (match.get("country") in ("World", "", None)):   # selecciones: historial internacional
+        try:
+            nl = history.national_lambdas(match["home"], match["away"])
+            if nl:
+                lambdas, rho, n = nl
+                source = f"Ratings de selecciones ({n} partidos desde {date.today().year - 4})"
+        except Exception:
+            pass
     if lambdas is None:   # sin historial: Elo (ClubElo) y, si no, goles deducidos de las cuotas
         try:
             intl = not strength.COUNTRY.get(match.get("country") or "")

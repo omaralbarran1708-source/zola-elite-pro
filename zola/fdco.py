@@ -157,6 +157,10 @@ def results(league_id: int, ref: date | None = None) -> list[dict]:
 def results_for_match(league_id: int, home: str, away: str, ref: date | None = None) -> list[dict]:
     """Resultados con los nombres de los dos equipos traducidos a los de API-Football (o [] si no se encuentran)."""
     rs = results(league_id, ref)
+    if len(rs) < 60:        # inicio de temporada: sumar la temporada anterior (el decaimiento le da menos peso)
+        from datetime import timedelta
+        prev = results(league_id, (ref or date.today()) - timedelta(days=365))
+        rs = prev + rs
     if not rs:
         return []
     teams = sorted({r["home"] for r in rs} | {r["away"] for r in rs})
