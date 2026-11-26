@@ -61,6 +61,15 @@ class FootballApi:
             raise ApiError(msg or "Error de API-Football")
         return data.get("response", [])
 
+    def _budget_ttl(self, base: float) -> float:
+        """Plan con pocas consultas (p. ej. 100/día): reparte lo que queda hasta medianoche."""
+        if self.remaining is None or self.remaining > 1000:
+            return base
+        now = datetime.now()
+        left = 86400 - (now.hour * 3600 + now.minute * 60 + now.second)
+        spare = max(1.0, self.remaining * 0.5)          # guarda la mitad para detalles y cuotas
+        return min(3600.0, max(base, left / spare))
+
     def _fetch(self, path: str, ttl: float, **params) -> list:
         """Consulta con caché en memoria + base de datos. Si la API falla, devuelve lo último guardado."""
         key = path + "?" + json.dumps(params, sort_keys=True)
@@ -69,13 +78,21 @@ class FootballApi:
         if hit and now - hit[0] < ttl:
             return hit[1]
         st = get_store()
+        blocked = st.cache_get("blocked:" + key, 24 * 3600)
+        if blocked is not None:      # el plan no permite esta consulta: no gastar llamadas
+            stale = st.cache_get(key, 10 ** 12)
+            if stale is not None:
+                return stale
+            raise ApiError(blocked)
         cached = st.cache_get(key, ttl)
         if cached is not None:
             self._mem[key] = (now, cached)
             return cached
         try:
             data = self._get(path, **params)
-        except ApiError:
+        except ApiError as e:
+            if any(w in str(e).lower() for w in ("plan", "access", "not have")):
+                st.cache_put("blocked:" + key, str(e))
             stale = st.cache_get(key, 10 ** 12)
             if stale is not None:
                 return stale
@@ -87,10 +104,10 @@ class FootballApi:
     # ---------- partidos ----------
     def fixtures(self, date_str: str, live: bool) -> list[dict]:
         if live:
-            res = self._fetch("fixtures", 45, live="all", timezone=TIMEZONE)
+            res = self._fetch("fixtures", self._budget_ttl(45), live="all", timezone=TIMEZONE)
         else:
             today = datetime.now(ZoneInfo(TIMEZONE)).date().isoformat()
-            ttl = 60 if date_str == today else (6 * 3600 if date_str < today else 3 * 3600)
+            ttl = self._budget_ttl(60) if date_str == today else (6 * 3600 if date_str < today else 3 * 3600)
             res = self._fetch("fixtures", ttl, date=date_str, timezone=TIMEZONE)
         items = [normalize_fixture(x) for x in res]
         get_store().upsert_fixtures(items)
@@ -98,8 +115,8 @@ class FootballApi:
 
     def detail(self, fixture_id: int, status_hint: str = "NS") -> dict:
         """Partido completo en 1 consulta: datos, eventos, estadísticas, alineaciones y jugadores."""
-        ttl = 45 if status_hint in LIVE_STATUSES else (30 * 86400 if status_hint in DONE_STATUSES else 3600)
-        res = self._fetch("fixtures", ttl, ids=str(fixture_id), timezone=TIMEZONE)
+        ttl = self._budget_ttl(45) if status_hint in LIVE_STATUSES else (30 * 86400 if status_hint in DONE_STATUSES else 3600)
+        res = self._fetch("fixtures", ttl, id=str(fixture_id), timezone=TIMEZONE)
         if not res:
             return {}
         item = res[0]
@@ -135,7 +152,7 @@ class FootballApi:
         return parse_prematch_odds(res)
 
     def live_odds(self, fixture_id: int) -> dict:
-        return parse_live_odds(self._fetch("odds/live", 60, fixture=fixture_id))
+        return parse_live_odds(self._fetch("odds/live", self._budget_ttl(60), fixture=fixture_id))
 
     def league_results(self, league_id: int, season: int) -> list[dict]:
         """Resultados terminados de la temporada (1 consulta para toda la liga, cada 6 h)."""
