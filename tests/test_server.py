@@ -30,3 +30,15 @@ def test_img_only_allows_api_sports():
 def test_spa_fallback():
     r = c.get("/ligas")
     assert r.status_code == 200 and "ZOLA" in r.text
+
+
+def test_backtest_endpoint(monkeypatch):
+    import sys
+    sys.path.insert(0, "tests")
+    from test_backtest import synthetic_csv
+    import zola.backtest as bt
+    monkeypatch.setattr(bt, "fetch_csv", lambda code, season: synthetic_csv())
+    j = c.get("/api/backtest?league=E0&season=2526").json()
+    assert j["league_name"] == "Premier League" and j["systems"]["model"]["n"] > 100
+    assert c.get("/api/backtest?league=XX").status_code == 400
+    assert any(l["code"] == "BRA" for l in c.get("/api/backtest/leagues").json()["leagues"])

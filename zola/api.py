@@ -7,6 +7,7 @@ temporada de cada equipo 12 h.
 from __future__ import annotations
 
 import time
+from datetime import date
 from functools import wraps
 
 import requests
@@ -107,6 +108,20 @@ class FootballApi:
         if not res:
             res = self._get("odds", fixture=fixture_id)
         return parse_prematch_odds(res)
+
+    @ttl_cache(6 * 3600)
+    def league_results(self, league_id: int, season: int) -> list[dict]:
+        """Resultados terminados de la temporada (1 consulta para toda la liga)."""
+        res = self._get("fixtures", league=league_id, season=season, status="FT-AET-PEN", timezone=TIMEZONE)
+        out = []
+        for x in res:
+            f = normalize_fixture(x)
+            try:
+                d = date.fromisoformat((f["kickoff"] or "")[:10])
+            except ValueError:
+                continue
+            out.append({"date": d, "home": f["home"], "away": f["away"], "hg": f["home_goals"], "ag": f["away_goals"]})
+        return out
 
     @ttl_cache(12 * 3600)
     def head_to_head(self, home_id: int, away_id: int) -> list[dict]:

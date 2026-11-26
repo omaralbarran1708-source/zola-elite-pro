@@ -77,6 +77,10 @@ class Prediction:
     best_bet: dict | None = None
     notes: list = field(default_factory=list)
     matrix: list = field(default_factory=list)   # P(marcador final) 0..5 x 0..5
+    model_1x2: list = field(default_factory=list)   # [1, X, 2] solo modelo
+    market_1x2: list = field(default_factory=list)  # [1, X, 2] implícito de la casa (sin margen)
+    blend_weight: float = 0.0                       # peso del mercado en la probabilidad final
+    source: str = ""                                # de dónde salen los goles esperados
 
 
 def _shrink(rate: float | None, games: int, prior: float) -> float:
@@ -130,12 +134,19 @@ def _remaining_fraction(state: LiveState) -> float:
     if state.status in {"FT", "AET", "PEN", "AWD", "WO"}:
         return 0.0
     if state.status == "HT":
-        return 0.5
+        return 1 - _cum_rate(46) / _cum_rate(MATCH_MINUTES)
     if state.status in {"NS", "TBD", "PST"} or not state.minute:
         return 1.0
     if state.status in {"ET", "BT", "P"}:
         return 0.0 if state.status == "P" else max(0.0, (122 - state.minute) / MATCH_MINUTES)
-    return max(0.02, (MATCH_MINUTES - state.minute) / MATCH_MINUTES)
+    return max(0.02, 1 - _cum_rate(state.minute) / _cum_rate(MATCH_MINUTES))
+
+
+def _cum_rate(t: float) -> float:
+    """Goles acumulados esperados hasta el minuto t (la tasa sube durante el partido:
+    ~45 % de los goles en el 1er tiempo y ~55 % en el 2do)."""
+    t = min(max(t, 0), MATCH_MINUTES)
+    return 0.8 * t + 0.2 * t * t / MATCH_MINUTES
 
 
 def live_adjust(lam_h: float, lam_a: float, state: LiveState) -> tuple[float, float, list]:
@@ -177,7 +188,7 @@ def live_adjust(lam_h: float, lam_a: float, state: LiveState) -> tuple[float, fl
     return rem_h, rem_a, notes
 
 
-def final_score_matrix(lam_h: float, lam_a: float, state: LiveState) -> np.ndarray:
+def final_score_matrix(lam_h: float, lam_a: float, state: LiveState, rho: float = DC_RHO) -> np.ndarray:
     """Distribución del marcador FINAL (goles actuales + restantes)."""
     n = MAX_GOALS
     full = np.zeros((n + 1, n + 1))
@@ -186,7 +197,7 @@ def final_score_matrix(lam_h: float, lam_a: float, state: LiveState) -> np.ndarr
         full[gh, ga] = 1.0
         return full
     in_play = state.minute and state.minute > 0
-    rem = score_matrix(lam_h, lam_a, rho=0 if in_play else DC_RHO)
+    rem = score_matrix(lam_h, lam_a, rho=0 if in_play else rho)
     for i in range(n + 1 - gh):
         for j in range(n + 1 - ga):
             full[gh + i, ga + j] += rem[i, j]
@@ -211,12 +222,44 @@ def kelly_fraction(p: float, odd: float) -> float:
     return max(0.0, (p * odd - 1) / (odd - 1))
 
 
+MARKET_WEIGHT = 0.35   # peso del mercado al combinar (el backtest permite comparar)
+
+
+def blend_matrix(m: np.ndarray, target: tuple[float, float, float]) -> np.ndarray:
+    """Reescala la matriz para que 1/X/2 sumen lo indicado, manteniendo la forma dentro de cada zona."""
+    i, j = np.indices(m.shape)
+    out = m.copy()
+    for mask, t in ((i > j, target[0]), (i == j, target[1]), (i < j, target[2])):
+        cur = m[mask].sum()
+        if cur > 0:
+            out[mask] = m[mask] * (t / cur)
+    return out / out.sum()
+
+
 def predict(home_name: str, away_name: str, home: TeamForm, away: TeamForm,
-            state: LiveState | None = None, odds: dict | None = None) -> Prediction:
+            state: LiveState | None = None, odds: dict | None = None,
+            lambdas: tuple[float, float] | None = None, rho: float | None = None,
+            source: str = "", market_weight: float = MARKET_WEIGHT) -> Prediction:
     state = state or LiveState()
-    lam_h, lam_a = expected_goals(home, away)
+    if lambdas:
+        lam_h, lam_a = lambdas
+    else:
+        lam_h, lam_a = expected_goals(home, away)
+        source = source or ("Estadísticas de temporada" if (home.has_data or away.has_data) else "Promedio de liga")
     rem_h, rem_a, notes = live_adjust(lam_h, lam_a, state)
-    m = final_score_matrix(rem_h, rem_a, state)
+    m = final_score_matrix(rem_h, rem_a, state, DC_RHO if rho is None else rho)
+
+    i, j = np.indices(m.shape)
+    model_1x2 = [float(m[i > j].sum()), float(m[i == j].sum()), float(m[i < j].sum())]
+    odds = odds or {}
+    fair = implied_probs(odds)
+    market_1x2 = [fair["1"], fair["X"], fair["2"]] if all(k in fair for k in ("1", "X", "2")) else []
+    w_used = 0.0
+    if market_1x2 and _remaining_fraction(state) > 0 and market_weight > 0:
+        target = tuple((1 - market_weight) * a + market_weight * b for a, b in zip(model_1x2, market_1x2))
+        m = blend_matrix(m, target)
+        w_used = market_weight
+        notes.append(f"Combinado con el mercado ({market_weight:.0%})")
 
     i, j = np.indices(m.shape)
     home_win = float(m[i > j].sum())
@@ -245,8 +288,8 @@ def predict(home_name: str, away_name: str, home: TeamForm, away: TeamForm,
     best = max(probs_1x2, key=probs_1x2.get)
     winner = {"home": home_name, "away": away_name, "draw": "Empate"}[best]
 
-    real = home.has_data and away.has_data
-    quality = "Datos reales" if real else ("Parcial" if (home.has_data or away.has_data) else "Sin datos (promedio de liga)")
+    real = bool(lambdas) or (home.has_data and away.has_data)
+    quality = source or ("Datos reales" if real else ("Parcial" if (home.has_data or away.has_data) else "Sin datos (promedio de liga)"))
     top_p = max(probs_1x2.values())
     if top_p >= 0.62 and real:
         confidence = "Alta"
@@ -258,8 +301,6 @@ def predict(home_name: str, away_name: str, home: TeamForm, away: TeamForm,
         notes.append("Sin estadísticas de temporada: se usó el promedio de liga")
 
     value_bets = []
-    odds = odds or {}
-    fair = implied_probs(odds)
     for mk, odd in odds.items():
         p = markets.get(mk)
         if p is None or not odd or odd <= 1 or p > 0.995 or p < 0.005:
@@ -292,4 +333,5 @@ def predict(home_name: str, away_name: str, home: TeamForm, away: TeamForm,
         winner=winner, confidence=confidence, data_quality=quality,
         markets=markets, value_bets=value_bets, best_bet=best_bet, notes=notes,
         matrix=[[round(float(m[a, b]), 5) for b in range(6)] for a in range(6)],
+        model_1x2=model_1x2, market_1x2=market_1x2, blend_weight=w_used, source=quality,
     )

@@ -1,53 +1,65 @@
 <!DOCTYPE html>
-<html lang="es" data-theme="dark">
+<html lang="es" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>ZOLA Elite · Marcadores en vivo y pronósticos</title>
-<meta name="description" content="Resultados en vivo, tablas y pronósticos de fútbol con modelo estadístico.">
-<meta name="theme-color" content="#0e1116">
+<title>ZOLA · Resultados en vivo y pronósticos de fútbol</title>
+<meta name="description" content="Resultados en vivo, tablas de posiciones y pronósticos de fútbol con un modelo estadístico que puedes poner a prueba.">
+<meta name="theme-color" content="#2f55f5">
 <link rel="icon" href="/static/zola_logo.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/styles.css?v=4">
+<link rel="stylesheet" href="/static/styles.css?v=10">
+<script>try{document.documentElement.dataset.theme=JSON.parse(localStorage.getItem("zola_theme"))||"light"}catch(e){}</script>
 </head>
 <body>
-<header class="topbar">
-  <div class="wrap topbar-in">
-    <a class="brand" href="#/" aria-label="ZOLA Elite inicio">
-      <img src="/static/zola_logo.png" alt="">
-      <span>ZOLA <b>Elite</b></span>
-    </a>
-    <nav class="mainnav" aria-label="Secciones">
-      <a href="#/" data-nav="matches">⚽ <span>Partidos</span></a>
+<div class="trend-wrap">
+  <div class="wrap trend">
+    <span class="trend-lbl" id="trendLbl">🔥 Destacados</span>
+    <div class="trend-list" id="ticker"></div>
+  </div>
+</div>
+<header class="hdr">
+  <div class="wrap hdr-top">
+    <a class="brand" href="#/" aria-label="ZOLA inicio"><img src="/static/zola_logo.png" alt=""><span>ZOLA</span></a>
+    <nav class="hnav" aria-label="Secciones">
+      <a href="#/" data-nav="matches">🗓️ <span>Resultados</span></a>
       <a href="#/ligas" data-nav="leagues">🏆 <span>Ligas</span></a>
-      <a href="#/mis-pronosticos" data-nav="picks">🎯 <span>Mis pronósticos</span><i class="navbadge" id="picksBadge" hidden></i></a>
+      <a href="#/probar" data-nav="test">🧪 <span>Probar modelo</span></a>
     </nav>
     <div class="search">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 2a8 8 0 0 1 6.3 12.9l5.4 5.4-1.4 1.4-5.4-5.4A8 8 0 1 1 10 2zm0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12z"/></svg>
-      <input id="q" type="search" placeholder="Buscar equipo, liga o país" autocomplete="off" aria-label="Buscar">
+      <input id="q" type="search" placeholder="Buscar en ZOLA" autocomplete="off" aria-label="Buscar">
       <kbd>/</kbd>
       <div class="suggest" id="suggest" hidden></div>
     </div>
-    <div class="top-actions">
-      <span class="apichip" id="apichip" title="Estado de los datos"><i></i><span>Conectando…</span></span>
-      <button class="iconbtn" id="themeBtn" title="Cambiar tema" aria-label="Cambiar tema">🌙</button>
+    <div class="hicons">
+      <span class="apichip" id="apichip" title="Estado de los datos"><i></i><span>…</span></span>
+      <button class="hbtn" id="themeBtn" title="Cambiar tema" aria-label="Cambiar tema">🌙</button>
     </div>
   </div>
-  <div class="ticker-wrap"><div class="wrap ticker" id="ticker"></div></div>
+  <div class="wrap hdr-sub">
+    <div class="sports">
+      <a class="sport on" href="#/">⚽ Fútbol</a>
+    </div>
+    <div class="subr">
+      <a href="#/mis-pronosticos" data-nav="picks">🎯 <span>Mis pronósticos</span><i class="navbadge" id="picksBadge" hidden></i></a>
+      <a href="#/" data-act="favs-shortcut">★ <span>Favoritos</span></a>
+    </div>
+  </div>
 </header>
 
 <main class="wrap" id="app" tabindex="-1"></main>
 
 <nav class="bottomnav" aria-label="Secciones">
-  <a href="#/" data-nav="matches"><b>⚽</b>Partidos</a>
+  <a href="#/" data-nav="matches"><b>🗓️</b>Resultados</a>
   <a href="#/ligas" data-nav="leagues"><b>🏆</b>Ligas</a>
-  <a href="#/mis-pronosticos" data-nav="picks"><b>🎯</b>Pronósticos</a>
+  <a href="#/probar" data-nav="test"><b>🧪</b>Probar</a>
+  <a href="#/mis-pronosticos" data-nav="picks"><b>🎯</b>Mis picks</a>
 </nav>
-
 <div class="toasts" id="toasts" aria-live="polite"></div>
-<footer class="wrap foot">ZOLA Elite · Las probabilidades son estimaciones de un modelo estadístico, no garantías. Apuesta con responsabilidad · +18</footer>
-<script src="/static/app.js?v=4" defer></script>
+<footer class="wrap foot">ZOLA · Probabilidades de un modelo estadístico, no garantías. Juega con responsabilidad · +18</footer>
+<script src="/static/app.js?v=10" defer></script>
 </body>
 </html>

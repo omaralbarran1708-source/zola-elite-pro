@@ -7,6 +7,7 @@ from datetime import date
 from . import demo
 from .api import ApiError, FootballApi
 from .model import LiveState, TeamForm
+from .ratings import Ratings, fit
 from .status import bucket_of, is_finished, is_live
 
 
@@ -19,6 +20,10 @@ class MatchDetail:
     odds: dict
     state: LiveState
     warnings: list = field(default_factory=list)
+    lambdas: tuple | None = None
+    rho: float | None = None
+    source: str = ""
+    ratings_info: dict | None = None
 
 
 def norm(s: str) -> str:
@@ -107,8 +112,20 @@ def match_detail(api: FootballApi, match: dict) -> MatchDetail:
             return default
 
     league, season = match.get("league_id"), match.get("season")
-    home_form = safe(lambda: api.team_form(match["home_id"], league, season), TeamForm(), "Stats local")
-    away_form = safe(lambda: api.team_form(match["away_id"], league, season), TeamForm(), "Stats visita")
+    results = safe(lambda: api.league_results(league, season), [], "Resultados de la liga") if league and season else []
+    ratings = ratings_for(league, season, results)
+    lambdas = rho = None
+    source = ""
+    info = None
+    if ratings.has(match["home"], 4) and ratings.has(match["away"], 4):
+        lambdas, rho = ratings.lambdas(match["home"], match["away"]), ratings.rho
+        source = f"Ratings de la temporada ({ratings.n_matches} partidos)"
+        info = ratings_info(ratings, match["home"], match["away"])
+        home_form = form_from_results(results, match["home"])
+        away_form = form_from_results(results, match["away"])
+    else:
+        home_form = safe(lambda: api.team_form(match["home_id"], league, season), TeamForm(), "Stats local")
+        away_form = safe(lambda: api.team_form(match["away_id"], league, season), TeamForm(), "Stats visita")
     events = safe(lambda: api.events(fid), [], "Eventos") if started else []
     stats = safe(lambda: api.statistics(fid), {"home": {}, "away": {}}, "Estadísticas") if started else {"home": {}, "away": {}}
     if is_live(match["status_short"]):
@@ -117,7 +134,46 @@ def match_detail(api: FootballApi, match: dict) -> MatchDetail:
         odds = {}
     else:
         odds = safe(lambda: api.odds(fid), {}, "Cuotas")
-    return MatchDetail(home_form, away_form, events, stats, odds, build_state(match, events, stats), warnings)
+    return MatchDetail(home_form, away_form, events, stats, odds, build_state(match, events, stats), warnings,
+                       lambdas=lambdas, rho=rho, source=source, ratings_info=info)
+
+
+_RATINGS_CACHE: dict = {}
+LAST_RATINGS: dict = {}   # (liga, temporada) -> Ratings más reciente (para pronósticos rápidos)
+
+
+def ratings_for(league, season, results: list) -> Ratings:
+    """Ajusta (y guarda) los ratings de una liga con sus resultados."""
+    if not results:
+        return Ratings()
+    key = (league, season, len(results))
+    if key not in _RATINGS_CACHE:
+        rows = [(r["date"], r["home"], r["away"], r["hg"], r["ag"]) for r in results]
+        _RATINGS_CACHE[key] = fit(rows)
+    LAST_RATINGS[(league, season)] = _RATINGS_CACHE[key]
+    return _RATINGS_CACHE[key]
+
+
+def ratings_info(r: Ratings, home: str, away: str) -> dict:
+    teams = list(r.attack)
+    att_rank = {t: i + 1 for i, t in enumerate(sorted(teams, key=lambda t: -r.attack[t]))}
+    def_rank = {t: i + 1 for i, t in enumerate(sorted(teams, key=lambda t: r.defense[t]))}
+    side = lambda t: {"attack": round(r.attack[t], 3), "defense": round(r.defense[t], 3),
+                      "attack_rank": att_rank[t], "defense_rank": def_rank[t], "games": r.games.get(t, 0)}
+    return {"home": side(home), "away": side(away), "teams": len(teams), "home_adv": round(r.home_adv, 3),
+            "rho": round(r.rho, 3), "matches": r.n_matches}
+
+
+def form_from_results(results: list, team: str) -> TeamForm:
+    """Promedios y forma (últimos 5) calculados con los resultados de la liga."""
+    mine = sorted([r for r in results if team in (r["home"], r["away"])], key=lambda r: r["date"])
+    home = [r for r in mine if r["home"] == team]
+    away = [r for r in mine if r["away"] == team]
+    avg = lambda xs: sum(xs) / len(xs) if xs else None
+    form = "".join("W" if gf > ga else "D" if gf == ga else "L" for gf, ga in
+                   ((r["hg"], r["ag"]) if r["home"] == team else (r["ag"], r["hg"]) for r in mine[-5:]))
+    return TeamForm(gf_home=avg([r["hg"] for r in home]), ga_home=avg([r["ag"] for r in home]), gp_home=len(home),
+                    gf_away=avg([r["ag"] for r in away]), ga_away=avg([r["hg"] for r in away]), gp_away=len(away), form=form)
 
 
 def settle_history(history, matches: list[dict], api: FootballApi | None = None, max_lookups: int = 3) -> int:

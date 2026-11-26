@@ -14,9 +14,10 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from zola import backtest as bt
 from zola import demo
 from zola.api import FootballApi
-from zola.data import list_matches, match_detail
+from zola.data import LAST_RATINGS, build_state, list_matches, match_detail
 from zola.logos import _path_for, crest_svg, logo
 from zola.model import predict
 from zola.status import STATUS_LABEL, bucket_of, is_finished, is_live
@@ -76,6 +77,32 @@ def matches(day: str | None = Query(None, alias="date"), live: bool = False):
             "matches": [_slim(m) for m in items]}
 
 
+@app.get("/api/quick")
+def quick(day: str | None = Query(None, alias="date")):
+    """Probabilidades 1X2 rápidas para la lista (sin gastar consultas: demo o ligas ya analizadas)."""
+    try:
+        d = date.fromisoformat(day) if day else _today()
+    except ValueError:
+        raise HTTPException(400, "Fecha inválida")
+    items, _ = list_matches(api, "Hoy", d)
+    out = {}
+    for m in items:
+        if is_finished(m["status_short"]):
+            continue
+        st = build_state(m, [], {})
+        if m.get("source") == "demo":
+            p = predict(m["home"], m["away"], demo.FORMS.get(m["home"], demo.TeamForm()),
+                        demo.FORMS.get(m["away"], demo.TeamForm()), state=st, market_weight=0)
+        else:
+            r = LAST_RATINGS.get((m.get("league_id"), m.get("season")))
+            if not r or not (r.has(m["home"], 4) and r.has(m["away"], 4)):
+                continue
+            p = predict(m["home"], m["away"], demo.TeamForm(), demo.TeamForm(), state=st,
+                        lambdas=r.lambdas(m["home"], m["away"]), rho=r.rho, market_weight=0)
+        out[m["match_key"]] = [round(p.home_win, 3), round(p.draw, 3), round(p.away_win, 3)]
+    return {"probs": out}
+
+
 @app.get("/api/match/{key}")
 def match(key: str, day: str | None = Query(None, alias="date")):
     d = date.fromisoformat(day) if day else _today()
@@ -83,7 +110,8 @@ def match(key: str, day: str | None = Query(None, alias="date")):
     if not m:
         raise HTTPException(404, "Partido no encontrado")
     det = match_detail(api, m)
-    pred = predict(m["home"], m["away"], det.home_form, det.away_form, det.state, det.odds)
+    pred = predict(m["home"], m["away"], det.home_form, det.away_form, det.state, det.odds,
+                   lambdas=det.lambdas, rho=det.rho, source=det.source)
     p = asdict(pred)
     return {
         "match": _slim(m),
@@ -91,6 +119,7 @@ def match(key: str, day: str | None = Query(None, alias="date")):
         "forms": {"home": asdict(det.home_form), "away": asdict(det.away_form)},
         "stats": det.stats, "events": det.events, "odds": det.odds,
         "state": asdict(det.state), "warnings": det.warnings, "remaining": api.remaining,
+        "ratings": det.ratings_info,
     }
 
 
@@ -156,6 +185,41 @@ def img(u: str = "", n: str = ""):
             return Response(data, media_type=mime, headers=headers)
     svg = base64.b64decode(crest_svg(n).split(",", 1)[1])
     return Response(svg, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+
+
+_BT_CACHE: dict = {}
+
+
+@app.get("/api/backtest/leagues")
+def backtest_leagues():
+    lg = [{"code": k, "name": v, "seasons": bt.seasons_for(k, _today())} for k, v in bt.MAIN_LEAGUES.items()]
+    lg += [{"code": k, "name": v, "seasons": bt.seasons_for(k, _today())} for k, v in bt.EXTRA_LEAGUES.items()]
+    return {"leagues": lg, "source": bt.SOURCE_URL}
+
+
+@app.get("/api/backtest")
+def backtest(league: str = "E0", season: str | None = None, weight: float = 0.35, threshold: float = 0.05):
+    if league not in bt.MAIN_LEAGUES and league not in bt.EXTRA_LEAGUES:
+        raise HTTPException(400, "Liga no disponible")
+    season = season or bt.seasons_for(league, _today())[0]
+    weight = min(max(weight, 0.0), 1.0)
+    threshold = min(max(threshold, 0.0), 0.5)
+    key = (league, season, round(weight, 2), round(threshold, 3))
+    if key in _BT_CACHE and _BT_CACHE[key][0] > datetime.now().timestamp() - 6 * 3600:
+        return _BT_CACHE[key][1]
+    try:
+        text = bt.fetch_csv(league, season)
+    except Exception as e:
+        return JSONResponse({"error": f"No se pudieron descargar los datos: {e}"}, status_code=502)
+    rows = bt.parse_csv(text, season if league in bt.EXTRA_LEAGUES else None)
+    try:
+        res = bt.run_backtest(rows, market_weight=weight, value_threshold=threshold)
+    except ValueError as e:
+        return JSONResponse({"error": str(e), "matches": len(rows)}, status_code=422)
+    name = bt.MAIN_LEAGUES.get(league) or bt.EXTRA_LEAGUES.get(league)
+    res.update({"league": league, "league_name": name, "season": season})
+    _BT_CACHE[key] = (datetime.now().timestamp(), res)
+    return res
 
 
 @app.get("/healthz")

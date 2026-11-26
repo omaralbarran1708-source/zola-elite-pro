@@ -35,7 +35,7 @@ def test_teams_differ_with_real_data():
 def test_no_data_falls_back_and_flags():
     p = predict("A", "B", TeamForm(), TeamForm())
     assert p.confidence == "Baja"
-    assert "promedio de liga" in p.data_quality
+    assert "promedio de liga" in p.data_quality.lower()
 
 
 def test_live_leader_late_is_big_favourite():
@@ -125,3 +125,66 @@ def test_logo_fallback_crest():
     assert _initials("Sporting Cristal") == "SC" and _initials("Palmeiras") == "PAL"
     assert logo(None, "Alianza Lima").startswith("data:image/svg+xml")
     assert crest_svg("A") == crest_svg("A")
+
+
+def test_ratings_fit_recovers_strength():
+    import numpy as np
+    from datetime import date, timedelta
+    from zola.ratings import fit
+    rng = np.random.default_rng(1)
+    teams = ["A", "B", "C", "D", "E", "F"]
+    att = {"A": 1.6, "B": 1.2, "C": 1.0, "D": 0.9, "E": 0.8, "F": 0.6}
+    ms, d0 = [], date(2026, 1, 1)
+    for k in range(6):
+        for h in teams:
+            for a in teams:
+                if h != a:
+                    lh, la = 1.2 * 1.25 * att[h] / att[a] ** 0.5, 1.2 * att[a] / att[h] ** 0.5
+                    ms.append((d0 + timedelta(days=k * 30), h, a, int(rng.poisson(lh)), int(rng.poisson(la))))
+    r = fit(ms)
+    order = [x["team"] for x in r.table()]
+    assert order[0] == "A" and "F" in order[-2:]
+    assert 1.05 < r.home_adv < 1.5
+    lh, la = r.lambdas("A", "F")
+    assert lh > 2 * la
+
+
+def test_market_blend_moves_toward_market():
+    base = predict("A", "B", STRONG, WEAK, market_weight=0)
+    odds = {"1": 3.0, "X": 3.2, "2": 2.4}
+    bl = predict("A", "B", STRONG, WEAK, odds=odds)
+    assert bl.home_win < base.home_win and bl.blend_weight > 0
+    assert abs(bl.home_win + bl.draw + bl.away_win - 1) < 1e-9
+
+
+def test_second_half_scores_more():
+    from zola.model import _remaining_fraction
+    assert _remaining_fraction(LiveState(minute=45, status="2H")) > 0.5
+
+
+def test_real_path_uses_league_ratings(monkeypatch):
+    import numpy as np
+    from datetime import date, timedelta
+    from zola.api import FootballApi
+    from zola.data import match_detail
+    api = FootballApi("x")
+    rng = np.random.default_rng(3)
+    teams = ["Alpha", "Beta", "Gamma", "Delta"]
+    res = []
+    for k in range(4):
+        for h in teams:
+            for a in teams:
+                if h != a:
+                    res.append({"date": date(2026, 8, 1) + timedelta(days=7 * k), "home": h, "away": a,
+                                "hg": int(rng.poisson(1.5 if h == "Alpha" else 1.1)), "ag": int(rng.poisson(1.0))})
+    monkeypatch.setattr(api, "league_results", lambda l, s: res)
+    monkeypatch.setattr(api, "odds", lambda f: {"1": 1.8, "X": 3.6, "2": 4.5})
+    called = []
+    monkeypatch.setattr(api, "team_form", lambda *a: called.append(a))
+    m = {"fixture_id": 1, "match_key": "af_1", "league_id": 39, "season": 2026, "home": "Alpha", "away": "Beta",
+         "home_id": 1, "away_id": 2, "status_short": "NS", "minute": 0, "home_goals": 0, "away_goals": 0}
+    d = match_detail(api, m)
+    assert d.lambdas and d.source.startswith("Ratings") and not called
+    assert d.ratings_info["teams"] == 4 and len(d.home_form.form) == 5
+    p = predict("Alpha", "Beta", d.home_form, d.away_form, d.state, d.odds, lambdas=d.lambdas, rho=d.rho, source=d.source)
+    assert p.blend_weight > 0 and p.market_1x2
